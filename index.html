@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>閱讀理解練習站</title>
+<meta name="description" content="上傳 Word 閱讀理解試卷，自動生成線上測驗，學生作答並標示關鍵詞、筆記與生詞。">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+
+<div id="app">
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#/">
+        <span class="brand-badge">閱</span>
+        <span class="brand-text">
+          <b>閱讀理解練習站</b>
+          <small>Reading Quiz Station</small>
+        </span>
+      </a>
+      <nav class="nav" id="nav">
+        <a href="#/" class="nav-link" data-route="home">首頁</a>
+        <a href="#/student" class="nav-link" data-route="student">學生專區</a>
+        <a href="#/teacher" class="nav-link" data-route="teacher">老師專區</a>
+        <a href="#/settings" class="nav-link" data-route="settings">設定</a>
+      </nav>
+      <div class="who" id="who"></div>
+    </div>
+  </header>
+
+  <main id="view" class="view"></main>
+
+  <footer class="foot">
+    <span>純靜態網站 · 可部署於 GitHub Pages · 資料以 JSON 存放</span>
+    <span class="dot">·</span>
+    <a href="#/settings">設定與資料管理</a>
+  </footer>
+
+</div>
+
+<div id="toast-root" class="toast-root"></div>
+<div id="modal-root"></div>
+<div id="sel-menu" class="sel-menu" hidden>
+  <div class="sel-menu-row" id="sel-colors">
+    <button class="sw sw-y" data-color="yellow" title="黃色"></button>
+    <button class="sw sw-g" data-color="green"  title="綠色"></button>
+    <button class="sw sw-b" data-color="blue"   title="藍色"></button>
+    <button class="sw sw-p" data-color="pink"   title="粉紅"></button>
+    <button class="sw sw-o" data-color="orange" title="橘色"></button>
+  </div>
+  <div class="sel-menu-btns">
+    <button class="mini-btn" id="sel-note">加筆記</button>
+    <button class="mini-btn" id="sel-vocab">加入生詞本</button>
+    <button class="mini-btn danger" id="sel-clear">清除標示</button>
+  </div>
+  <div class="sel-menu-text" id="sel-preview"></div>
+</div>
+
+<!-- ===== 函式庫 ===== -->
+<script src="assets/js/lib/jszip.min.js"></script>
+
+<!-- ===== 核心 ===== -->
+<script src="assets/js/core/util.js"></script>
+<script src="assets/js/core/crypto.js"></script>
+<script src="assets/js/core/store.js"></script>
+<script src="assets/js/core/backend.js"></script>
+<script src="assets/js/core/docx-parser.js"></script>
+
+<!-- ===== UI 元件 ===== -->
+<script src="assets/js/ui/highlighter.js"></script>
+
+<!-- ===== 頁面 ===== -->
+<script src="assets/js/teacher.js"></script>
+<script src="assets/js/student.js"></script>
+<script src="assets/js/app.js"></script>
+
+</body>
+</html>

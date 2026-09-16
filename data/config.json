@@ -1,0 +1,11 @@
+{
+  "site": "閱讀理解練習站",
+  "version": 1,
+  "quizDir": "data/quizzes",
+  "rosterPath": "data/roster.json",
+  "notes": [
+    "index.json 由老師端的『發佈到 GitHub』自動維護，不需手動編輯。",
+    "roster.json 為學生帳號（僅存放 salt:hash，不存明文密碼）。",
+    "學生讀取這些檔案是同源靜態讀取，不需要任何 Token。"
+  ]
+}

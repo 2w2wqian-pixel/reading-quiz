@@ -300,7 +300,7 @@
         stats: res.stats
       };
       return Store.quiz.save(quiz).then(function () {
-        U.toast('解析完成：' + res.questions.length + ' 題 / ' + res.passages.length + ' 篇文章', 'ok');
+        U.toast('解析完成：' + res.questions.length + ' 題／' + res.passages.length + ' 篇文章（已存為草稿，請按「發佈到 GitHub」）', 'ok', 4500);
         location.hash = '#/edit/' + quiz.id;
       });
     }).catch(function (e) {
@@ -346,6 +346,17 @@
         : '<span class="muted">尚未指派為作業</span>'
     });
     top.appendChild(asgLine);
+
+    /* 發佈狀態提示：草稿學生看不到，要按「發佈到 GitHub」 */
+    if (!quiz.published) {
+      var hasCloud = (Backend.GitHub && Backend.GitHub.ok && Backend.GitHub.ok()) ||
+                     (Backend.Firebase && Backend.Firebase.ok && Backend.Firebase.ok());
+      top.appendChild(U.el('div.warnbox.mt2', {
+        html: hasCloud
+          ? '📄 <b>這份試卷仍是草稿，學生還看不到。</b>確認內容無誤後，按下方「<b>發佈到 GitHub</b>」即可發佈。'
+          : '📄 <b>這份試卷仍是草稿，學生還看不到。</b>而且目前<b>尚未設定雲端</b>，請先到「<b>⑤ 資料與同步</b>」填好 GitHub（擁有者／repo／Token）或 Firebase，再回來按「<b>發佈到 GitHub</b>」發佈。'
+      }));
+    }
 
     if ((quiz.warnings || []).length) {
       var w = U.el('div.warnbox.mt2');
@@ -433,9 +444,10 @@
     }
     function publish() {
       quiz.title = U.trim(tInp.value) || quiz.title;
-      quiz.published = true;
+      /* 注意：published 只可在「發佈成功」後才設為 true（Backend.publishQuiz 內部會設），
+         否則發佈失敗時會被誤標成「已發佈」，之後按儲存就會把假狀態存起來。 */
       Backend.publishQuiz(quiz).then(function () {
-        U.toast('已發佈到 GitHub，學生重整頁面即可看到', 'ok');
+        U.toast('已發佈，學生重新載入頁面即可看到', 'ok');
         refresh();
       }).catch(function (e) { U.toast('發佈失敗：' + e.message, 'bad'); });
     }

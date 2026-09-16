@@ -204,8 +204,15 @@
     submitMode: 'offline',
     /* GitHub（老師端同步試卷／封存作答） */
     gh: { owner: '', repo: '', branch: 'main', token: '', path: 'data' },
-    /* 收集端（學生提交） */
-    hook: { postUrl: '', getUrl: '', secret: '' },
+    /* 收集端（學生提交／註冊／草稿，全部走同一個端點） */
+    hook: { postUrl: '', getUrl: '', key: '', sheetUrl: '' },
+    /* Firebase Realtime Database（跨裝置雲端同步） */
+    fb: { enabled: false, dbUrl: '', apiKey: '', classCode: '' },
+    /* 自助註冊 */
+    classCode: '',
+    allowSelfRegister: false,
+    /* 雲端草稿 */
+    cloudDraft: true,
     /* 老師密碼（"salt:hash"） */
     teacherPass: '',
     /* 學生是否可在提交前看答案 */
@@ -225,7 +232,8 @@
       catch (e) { s = {}; }
       return Object.assign({}, DEFAULT_SETTINGS, s, {
         gh: Object.assign({}, DEFAULT_SETTINGS.gh, s.gh || {}),
-        hook: Object.assign({}, DEFAULT_SETTINGS.hook, s.hook || {})
+        hook: Object.assign({}, DEFAULT_SETTINGS.hook, s.hook || {}),
+        fb: Object.assign({}, DEFAULT_SETTINGS.fb, s.fb || {})
       });
     },
     set: function (patch) {
@@ -233,6 +241,7 @@
       var next = Object.assign({}, cur, patch);
       if (patch.gh) next.gh = Object.assign({}, cur.gh, patch.gh);
       if (patch.hook) next.hook = Object.assign({}, cur.hook, patch.hook);
+      if (patch.fb) next.fb = Object.assign({}, cur.fb, patch.fb);
       localStorage.setItem(LS_KEY, JSON.stringify(next));
       return next;
     },

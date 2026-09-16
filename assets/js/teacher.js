@@ -572,6 +572,30 @@
           text: '報表', style: { marginLeft: '4px' },
           onclick: function () { location.hash = '#/teacher/reports'; setTimeout(function () { RQ._reportQuiz = m.id; location.reload(); }, 50); }
         }));
+        var onGithub = m.published || m._src === 'published' || m._src === 'both';
+        var delBtn = U.el('button.btn.xs.danger', {
+          text: '刪除', style: { marginLeft: '4px' },
+          onclick: function () {
+            var scope = '本機資料' + (onGithub ? '以及 GitHub 上的副本' : '') + '都會被移除';
+            U.confirm('確定要刪除試卷「' + m.title + '」嗎？' + scope + '，此動作無法復原。', function () {
+              delBtn.disabled = true;
+              Backend.deleteQuiz(m.id, { cloud: true, github: true }).then(function (r) {
+                if (!r.ok) { U.toast('本機刪除失敗', 'bad'); delBtn.disabled = false; return; }
+                if (onGithub && r.github === false) {
+                  U.toast('試卷已刪除，但 GitHub 副本刪除失敗（請稍後重試）', 'bad');
+                } else {
+                  U.toast('試卷已刪除', 'ok');
+                }
+                view.innerHTML = '';
+                Teacher.quizzes(view);
+              }).catch(function (e) {
+                delBtn.disabled = false;
+                U.toast('刪除失敗：' + ((e && e.message) || '未知錯誤'), 'bad');
+              });
+            });
+          }
+        });
+        ops.appendChild(delBtn);
         tr.appendChild(ops);
         tb.appendChild(tr);
       });
@@ -586,26 +610,84 @@
   Teacher.reports = function (view) {
     var box = U.el('div');
     view.appendChild(box);
+    if (Teacher._poll) { clearInterval(Teacher._poll); Teacher._poll = null; }
 
     Promise.all([Backend.listQuizzes(), Backend.listSubmissions()]).then(function (r) {
       var quizzes = r[0], subs = r[1];
+      var sel = null;
       draw(RQ._reportQuiz || (quizzes[0] && quizzes[0].id) || null);
       RQ._reportQuiz = null;
+
+      function reload(thenDraw) {
+        return Promise.all([Backend.listQuizzes(), Backend.listSubmissions()])
+          .then(function (r2) {
+            quizzes = r2[0]; subs = r2[1];
+            if (thenDraw) draw(sel && sel.value);
+          });
+      }
+
+      function sourceBadge() {
+        var src = Backend.Cloud.lastSource;
+        var map = {
+          firebase: ['mint', '雲端即時（Firebase）'],
+          live: ['mint', '雲端即時（Apps Script）'],
+          csv: ['sun', '試算表 CSV 快取（可能延遲 0–5 分鐘）'],
+          offline: ['gray', '只讀本機（尚未設定雲端）']
+        };
+        var m = map[src] || map.offline;
+        return U.el('span.tag.' + m[0], {
+          text: m[1] + (Backend.Cloud.lastReadAt ? '・' + U.fmtDate(Backend.Cloud.lastReadAt, true).slice(11) : '')
+        });
+      }
 
       function draw(selId) {
         box.innerHTML = '';
         var header = U.el('div.card');
-        var sel = U.el('select.input', { style: { maxWidth: '320px' } });
+        sel = U.el('select.input', { style: { maxWidth: '320px' } });
         sel.appendChild(U.el('option', { value: '', text: '（全部試卷）' }));
         quizzes.forEach(function (q) { sel.appendChild(U.el('option', { value: q.id, text: q.title })); });
         sel.value = selId || '';
         sel.addEventListener('change', function () { draw(sel.value); });
+
+        var refreshBtn = U.el('button.btn.sm.primary', {
+          text: '重新整理',
+          onclick: function () {
+            refreshBtn.disabled = true; refreshBtn.textContent = '讀取中…';
+            reload(true).then(function () {
+              refreshBtn.disabled = false; refreshBtn.textContent = '重新整理';
+              U.toast('已更新', 'ok', 1200);
+            });
+          }
+        });
+        var cbAuto = U.el('input', { type: 'checkbox' });
+        cbAuto.checked = !!Teacher._poll;
+        cbAuto.addEventListener('change', function () {
+          if (Teacher._poll) { clearInterval(Teacher._poll); Teacher._poll = null; }
+          if (cbAuto.checked) {
+            Teacher._poll = setInterval(function () { reload(true); }, 45000);
+            U.toast('已開啟自動更新（每 45 秒）', 'ok');
+          }
+        });
+
         header.appendChild(U.el('div.row.between', {}, [
           U.el('div.row', {}, [U.el('label.tiny.muted', { text: '選擇試卷：' }), sel]),
           U.el('div.row', {}, [
+            refreshBtn,
             U.el('button.btn.sm', { text: '匯出 CSV', onclick: function () { exportCSV(sel.value, subs); } }),
             U.el('button.btn.sm', { text: '匯出 JSON', onclick: function () { exportJSON(sel.value, subs); } })
           ])
+        ]));
+        header.appendChild(U.el('div.row.between.mt2', {}, [
+          U.el('div.row', {}, [
+            sourceBadge(),
+            U.el('label.check', {}, [cbAuto, U.el('span.tiny', { text: '每 45 秒自動更新' })])
+          ]),
+          (function () {
+            var su = (Settings.get().hook || {}).sheetUrl;
+            return su ? U.el('a.btn.sm.ghost', {
+              href: su, target: '_blank', rel: 'noopener', text: '直接開試算表（最即時）'
+            }) : null;
+          })()
         ]));
         box.appendChild(header);
 
@@ -613,9 +695,15 @@
         var quiz = quizzes.filter(function (q) { return q.id === sel.value; })[0];
 
         if (!list.length) {
+          var tip = Backend.Cloud.lastSource === 'csv'
+            ? '若學生剛送出，試算表 CSV 快取可能要幾分鐘才更新，請按「重新整理」或直接用上方「直接開試算表」確認。'
+            : (Backend.Cloud.driver() === 'offline'
+              ? '目前沒有設定雲端，學生的作答只存在他自己的裝置上，請先到「⑤ 資料與同步」設定。'
+              : '學生送出後會出現在這裡。');
           box.appendChild(U.el('div.empty', {}, [
             U.el('div.big', { text: '📝' }),
-            U.el('div', { text: '這份試卷還沒有人作答' })
+            U.el('div', { text: '這份試卷還沒有人作答' }),
+            U.el('small', { text: tip })
           ]));
           return;
         }
@@ -663,12 +751,56 @@
         });
         tbl.appendChild(tb);
         box.appendChild(U.el('div.tbl-wrap', {}, [tbl]));
+
+        /* 誰還沒交 */
+        Backend.getRoster().then(function (roster) {
+          if (!roster.length) return;
+          var doneIds = {};
+          list.forEach(function (s) { doneIds[s.studentId] = 1; });
+          var notDone = roster.filter(function (st) { return !doneIds[st.id]; });
+          var card2 = U.el('div.card.mt3');
+          card2.appendChild(U.el('h3', {
+            text: '尚未提交（' + notDone.length + ' / ' + roster.length + ' 人）'
+          }));
+          if (!notDone.length) {
+            card2.appendChild(U.el('div.tiny.muted', { text: '全部都交了 🎉' }));
+          } else {
+            card2.appendChild(U.el('div.row', { style: { gap: '6px', flexWrap: 'wrap' } },
+              notDone.map(function (st) {
+                return U.el('span.tag.gray', { text: (st.name || st.username) + (st.className ? '（' + st.className + '）' : '') });
+              })
+            ));
+          }
+          box.appendChild(card2);
+        });
       }
     });
   };
 
+  /**
+   * 查看單一學生的作答詳情。
+   * 注意：必需要用 Backend.getQuiz() 拿「完整試卷」，
+   * listQuizzes() 回傳的只是摘要（沒有 questions），直接拿來用會炸。
+   */
   function detail(sub, quiz) {
     var d = U.el('div');
+    var loading = U.el('div.empty', { text: '載入試卷題目中…' });
+    d.appendChild(loading);
+    var m = U.modal({ title: '作答詳情', width: 880, body: d, actions: [{ label: '關閉' }] });
+
+    Promise.resolve(
+      (quiz && quiz.questions) ? quiz : Backend.getQuiz(sub.quizId)
+    ).then(function (full) {
+      d.innerHTML = '';
+      renderDetail(d, sub, full);
+    }).catch(function (e) {
+      d.innerHTML = '';
+      d.appendChild(U.el('div.warnbox', { text: '無法載入試卷：' + (e.message || e) }));
+    });
+    return m;
+  }
+
+  function renderDetail(d, sub, quiz) {
     var head = U.el('div.row.between', {}, [
       U.el('div', {}, [
         U.el('h3.mb0', { text: (sub.studentName || sub.username || '') + ' 的作答' }),
@@ -752,10 +884,11 @@
       d.appendChild(nc);
     }
 
-    U.modal({
-      title: '作答詳情', width: 860, body: d,
-      actions: [{ label: '關閉' }]
-    });
+    /* 遠端同步狀態 */
+    var syncTxt = sub._synced
+      ? '雲端同步：' + sub._synced + (sub._syncError ? '（失敗：' + sub._syncError + '）' : '')
+      : '本機記錄';
+    d.appendChild(U.el('div.tiny.faint.mt2', { text: syncTxt }));
   }
 
   function recalc(sub, quiz) {
@@ -924,8 +1057,76 @@
   Teacher.data = function (view) {
     var s = Settings.get();
 
+    /* ---------- 雲端同步（學生跨裝置 + 老師即時看到） ---------- */
+    var fb = U.el('div.card');
+    fb.appendChild(U.el('h3', { text: '① 雲端同步（讓學生用手機／iPad／電腦都能用）' }));
+    fb.appendChild(U.el('div.infobox', {
+      html: '沒有設定雲端時，學生的作答只存在他自己的瀏覽器裡，你看不到。<br>' +
+        '底下<b>任選一種</b>填好並按「啟用並測試」即可：' +
+        '<b>Firebase</b>（即時、最順）或 <b>Google Apps Script</b>（免費無上限）。'
+    }));
+
+    var fbUrl = U.el('input.input', { value: (s.fb || {}).dbUrl || '', placeholder: 'https://你的專案.firebaseio.com' });
+    var fbKey = U.el('input.input', { value: (s.fb || {}).apiKey || '', placeholder: 'Web API Key（AIza…）' });
+    var fbCode = U.el('input.input', { value: (s.fb || {}).classCode || '', placeholder: '例如：2A-CHI' });
+    fb.appendChild(U.el('div', {}, [U.el('label.tiny.muted', { text: 'Firebase Realtime Database URL' }), fbUrl]));
+    fb.appendChild(U.el('div.mt1', {}, [U.el('label.tiny.muted', { text: 'Firebase Web API Key' }), fbKey]));
+    fb.appendChild(U.el('div.mt1', {}, [U.el('label.tiny.muted', { text: '班級代碼（所有資料放在這個命名空間下）' }), fbCode]));
+    fb.appendChild(U.el('div.mt2.row', {}, [
+      U.el('button.btn.primary.sm', {
+        text: '啟用 Firebase 並測試', onclick: function () {
+          Settings.set({ fb: { enabled: true, dbUrl: U.trim(fbUrl.value), apiKey: U.trim(fbKey.value), classCode: U.trim(fbCode.value) } });
+          Backend.Cloud.test().then(function (r) {
+            U.toast('雲端連線成功（' + r.driver + '）', 'ok', 3600);
+            Teacher.render(view, 'data');
+          }).catch(function (e) { U.toast('連線失敗：' + e.message, 'bad', 4200); });
+        }
+      }),
+      U.el('button.btn.sm.ghost', {
+        text: '停用 Firebase', onclick: function () {
+          Settings.set({ fb: { enabled: false } });
+          U.toast('已停用'); Teacher.render(view, 'data');
+        }
+      })
+    ]));
+    fb.appendChild(U.el('div.tiny.faint.mt2', {
+      html: 'Firebase 免費額度（Spark）：' +
+        'Realtime Database 1 GB 儲存／每月 10 GB 流量，' +
+        '一個班級綽綽有餘。<b>API Key 本來就設計成放在前端</b>，' +
+        '真正的防護是資料庫規則：' +
+        '<code>{"rules":{"rq":{".read":"auth != null",".write":"auth != null"}}}</code>（只允許匿名登入者）。'
+    }));
+    view.appendChild(fb);
+
+    /* 註冊設定 */
+    var reg = U.el('div.card');
+    reg.appendChild(U.el('h3', { text: '② 學生註冊方式' }));
+    var cbSelf = U.el('input', { type: 'checkbox' });
+    cbSelf.checked = !!s.allowSelfRegister;
+    var codeInp = U.el('input.input', { value: s.classCode || '', placeholder: '例如 2A-CHI', style: { maxWidth: '220px' } });
+    reg.appendChild(U.el('label.check', { style: { display: 'flex', marginBottom: '8px' } }, [
+      cbSelf, U.el('span', { text: '開放學生自助註冊（學生填姓名＋自選帳號＋密碼＋班級代碼）' })
+    ]));
+    reg.appendChild(U.el('div.row', {}, [
+      U.el('label.tiny.muted', { text: '班級代碼：' }), codeInp,
+      U.el('span.tiny.faint', { text: '（告訴學生這組代碼；Apps Script 端也要填一樣的 CLASS_CODE）' })
+    ]));
+    reg.appendChild(U.el('div.mt2', {}, [
+      U.el('button.btn.primary.sm', {
+        text: '儲存註冊設定', onclick: function () {
+          Settings.set({ allowSelfRegister: cbSelf.checked, classCode: U.trim(codeInp.value) });
+          U.toast('已儲存', 'ok');
+        }
+      })
+    ]));
+    reg.appendChild(U.el('div.tiny.faint.mt2', {
+      html: '邏輯：學生自助註冊後，帳號會寫進雲端名冊 → 你在「④ 學生名冊」立刻看到 → ' +
+        '學生在任何裝置用同一組帳號密碼登入，作答進度與提交結果都跟著帳號走。'
+    }));
+    view.appendChild(reg);
+
     var gh = U.el('div.card');
-    gh.appendChild(U.el('h3', { text: 'GitHub 設定（老師端同步用）' }));
+    gh.appendChild(U.el('h3', { text: '③ GitHub 設定（老師端：試卷長期保存）' }));
     gh.appendChild(U.el('div.infobox', {
       html: 'Token 只會存在<b>這台電腦的 localStorage</b>，不會寫進程式碼、也不會上傳。' +
         '建議使用 <b>fine-grained token</b>，只授權單一 repo 的 Contents 讀寫，並設定到期日。'
@@ -959,7 +1160,7 @@
     view.appendChild(gh);
 
     var hk = U.el('div.card');
-    hk.appendChild(U.el('h3', { text: '學生作答收集端（Webhook）' }));
+    hk.appendChild(U.el('h3', { text: '④ 學生作答收集端（Google Apps Script）' }));
     hk.appendChild(U.el('div.infobox', {
       html: '學生不能用你的 Token 寫入 repo，所以提交要經由另一個免費端點。' +
         '最簡單的做法是用 <b>Google Apps Script</b>（免費、無流量上限），程式碼放在 <code>tools/apps-script.gs</code>。' +
@@ -967,25 +1168,48 @@
     }));
     var pu = U.el('input.input', { value: s.hook.postUrl, placeholder: 'https://script.google.com/macros/s/.../exec' });
     var gu = U.el('input.input', { value: s.hook.getUrl, placeholder: 'https://docs.google.com/spreadsheets/d/e/.../pub?output=csv' });
-    hk.appendChild(U.el('div', {}, [U.el('label.tiny.muted', { text: '送出網址（POST）' }), pu]));
-    hk.appendChild(U.el('div.mt1', {}, [U.el('label.tiny.muted', { text: '讀取網址（GET，CSV 或 JSON）' }), gu]));
+    var wk = U.el('input.input', { value: s.hook.key || '', placeholder: '可留空（對應 Apps Script 的 WRITE_KEY）' });
+    var su = U.el('input.input', { value: s.hook.sheetUrl || '', placeholder: 'https://docs.google.com/spreadsheets/d/.../edit（選填）' });
+    hk.appendChild(U.el('div', {}, [U.el('label.tiny.muted', { text: '送出網址（POST，Web App 的 /exec）' }), pu]));
+    hk.appendChild(U.el('div.mt1', {}, [U.el('label.tiny.muted', { text: '讀取網址（GET，試算表發佈成 CSV）' }), gu]));
+    hk.appendChild(U.el('div.mt1', {}, [U.el('label.tiny.muted', { text: '試算表網址（選填，報表頁會有「直接開試算表」按鈕）' }), su]));
+    hk.appendChild(U.el('div.mt1', {}, [U.el('label.tiny.muted', { text: '寫入金鑰（選填）' }), wk]));
+    hk.appendChild(U.el('div.warnbox.mt2', {
+      html: '<b>關於即時性：</b>學生一按提交，資料<b>立刻</b>寫進你的 Google 試算表' +
+        '（這部分沒有延遲）。但網站的報表是讀「試算表發佈成 CSV」的網址，' +
+        'Google 對它有快取，通常 <b>0–5 分鐘</b>才會更新。' +
+        '程式會先嘗試即時讀取（/exec），多數瀏覽器會因 CORS 擋住而改走 CSV。' +
+        '<b>想要秒級即時，請改用 Firebase。</b>'
+    }));
+    var cbDraft = U.el('input', { type: 'checkbox' });
+    cbDraft.checked = s.cloudDraft !== false;
+    hk.appendChild(U.el('div.mt2', {}, [
+      U.el('label.check', { style: { display: 'flex' } }, [cbDraft, U.el('span', { text: '學生作答進度同步到雲端（換裝置可接續）' })])
+    ]));
     var sm = U.el('select.input', { style: { maxWidth: '260px' } });
     [['offline', '只存本機（離線可用）'], ['webhook', '本機 + 傳到收集端'], ['github', '本機 + 寫入 GitHub repo']].forEach(function (x) {
       sm.appendChild(U.el('option', { value: x[0], text: x[1] }));
     });
     sm.value = s.submitMode || 'offline';
-    hk.appendChild(U.el('div.mt2', {}, [U.el('label.tiny.muted', { text: '學生提交方式' }), sm]));
+    hk.appendChild(U.el('div.mt2', {}, [U.el('label.tiny.muted', { text: '學生提交方式（若已用 Firebase 就不用改）' }), sm]));
     hk.appendChild(U.el('div.mt2.row', {}, [
       U.el('button.btn.primary.sm', {
         text: '儲存', onclick: function () {
-          Settings.set({ hook: { postUrl: U.trim(pu.value), getUrl: U.trim(gu.value) }, submitMode: sm.value });
+          Settings.set({
+            hook: {
+              postUrl: U.trim(pu.value), getUrl: U.trim(gu.value),
+              key: U.trim(wk.value), sheetUrl: U.trim(su.value)
+            },
+            submitMode: sm.value, cloudDraft: cbDraft.checked
+          });
           U.toast('已儲存', 'ok');
         }
       }),
       U.el('button.btn.sm', {
-        text: '測試讀取', onclick: function () {
-          Backend.Hook.list().then(function (l) { U.toast('讀到 ' + l.length + ' 筆作答', 'ok'); })
-            .catch(function (e) { U.toast('讀取失敗：' + e.message, 'bad'); });
+        text: '測試雲端讀取', onclick: function () {
+          Backend.Cloud.getAll('submission').then(function (l) {
+            U.toast('讀到 ' + l.length + ' 筆作答（' + Backend.Cloud.driver() + '）', 'ok');
+          }).catch(function (e) { U.toast('讀取失敗：' + e.message, 'bad'); });
         }
       }),
       U.el('button.btn.sm', {
@@ -997,7 +1221,7 @@
     view.appendChild(hk);
 
     var sync = U.el('div.card');
-    sync.appendChild(U.el('h3', { text: '同步與備份' }));
+    sync.appendChild(U.el('h3', { text: '⑤ 同步與備份' }));
     sync.appendChild(U.el('div.row', {}, [
       U.el('button.btn.sm', {
         text: '從 repo 拉取試卷', onclick: function () {

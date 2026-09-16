@@ -173,40 +173,122 @@
   var Student = {};
 
   Student.login = function (view) {
-    view.innerHTML = '';
-    var card = U.el('div.card', { style: { maxWidth: '420px', margin: '30px auto' } });
-    card.appendChild(U.el('h2', { text: '學生登入' }));
-    card.appendChild(U.el('p.tiny.muted', { text: '帳號由老師建立；若老師尚未設定，請先向老師索取。' }));
+    var set = Settings.get();
+    var canRegister = !!set.allowSelfRegister || !!(set.hook && set.hook.postUrl);
 
-    var un = U.el('input.input', { placeholder: '使用者帳號' });
-    var pw = U.el('input.input', { type: 'password', placeholder: '密碼' });
-    var form = U.el('div');
-    form.appendChild(U.el('label.tiny.muted', { text: '帳號' })); form.appendChild(un);
-    form.appendChild(U.el('div', { style: { height: '8px' } }));
-    form.appendChild(U.el('label.tiny.muted', { text: '密碼' })); form.appendChild(pw);
-    card.appendChild(form);
+    function draw(mode) {
+      view.innerHTML = '';
+      var card = U.el('div.card', { style: { maxWidth: '440px', margin: '26px auto' } });
 
-    card.appendChild(U.el('div.mt2', { style: { display: 'flex', gap: '8px' } }, [
-      U.el('button.btn.primary', {
-        text: '登入', onclick: function () { doLogin(U.trim(un.value), pw.value); }
-      })
-    ]));
-    pw.addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin(U.trim(un.value), pw.value); });
-    view.appendChild(card);
+      var tabs = U.el('div.row', { style: { gap: '6px', marginBottom: '14px' } }, [
+        U.el('button.btn.sm' + (mode === 'login' ? '.primary' : ''), {
+          text: '登入', onclick: function () { draw('login'); }
+        })
+      ]);
+      if (canRegister) {
+        tabs.appendChild(U.el('button.btn.sm' + (mode === 'reg' ? '.primary' : ''), {
+          text: '第一次使用・註冊', onclick: function () { draw('reg'); }
+        }));
+      }
+      card.appendChild(tabs);
+
+      if (mode === 'login') {
+        card.appendChild(U.el('h2', { text: '學生登入' }));
+        card.appendChild(U.el('p.tiny.muted', {
+          text: '用手機、iPad 或電腦都可以登入；作答進度會自動存到雲端，換裝置也能繼續。'
+        }));
+        var un = U.el('input.input', { placeholder: '使用者帳號' });
+        var pw = U.el('input.input', { type: 'password', placeholder: '密碼' });
+        card.appendChild(field('帳號', un));
+        card.appendChild(U.el('div', { style: { height: '8px' } }));
+        card.appendChild(field('密碼', pw));
+        var btn = U.el('button.btn.primary.block.mt2', {
+          text: '登入', onclick: function () { doLogin(U.trim(un.value), pw.value); }
+        });
+        card.appendChild(btn);
+        pw.addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin(U.trim(un.value), pw.value); });
+        view.appendChild(card);
+        un.focus();
+        return;
+      }
+
+      /* ---- 註冊 ---- */
+      card.appendChild(U.el('h2', { text: '註冊帳號' }));
+      if (!set.allowSelfRegister) {
+        card.appendChild(U.el('div.warnbox', {
+          text: '老師尚未開啟自助註冊。若你已有老師給的帳號，請改用「登入」。'
+        }));
+        view.appendChild(card);
+        return;
+      }
+      var rName = U.el('input.input', { placeholder: '例如：陳小明' });
+      var rClass = U.el('input.input', { placeholder: '例如：2A（可留空）' });
+      var rUser = U.el('input.input', { placeholder: '英文或數字，例如 ming123' });
+      var rPw = U.el('input.input', { type: 'password', placeholder: '至少 4 個字' });
+      var rCode = U.el('input.input', { placeholder: '向老師索取' });
+      card.appendChild(field('姓名', rName));
+      card.appendChild(field('班別（選填）', rClass));
+      card.appendChild(field('自選帳號', rUser));
+      card.appendChild(field('自訂密碼', rPw));
+      card.appendChild(field('班級代碼', rCode));
+      card.appendChild(U.el('button.btn.primary.block.mt2', {
+        text: '註冊並登入', onclick: function () { doRegister(); }
+      }));
+      view.appendChild(card);
+
+      function doRegister() {
+        var u = U.trim(rUser.value), p = U.trim(rPw.value), n = U.trim(rName.value);
+        if (!u || !p || !n) { U.toast('姓名、帳號、密碼都要填', 'bad'); return; }
+        if (p.length < 4) { U.toast('密碼至少 4 個字', 'bad'); return; }
+        if (/\s/.test(u)) { U.toast('帳號不能有空格', 'bad'); return; }
+        Backend.getRoster().then(function (list) {
+          if (list.some(function (s) { return String(s.username).toLowerCase() === u.toLowerCase(); })) {
+            U.toast('這個帳號已經有人用了，換一個試試', 'bad');
+            return null;
+          }
+          return RQ.crypto.hashPassword(p).then(function (h) {
+            var stu = {
+              id: U.uid('stu'), username: u, name: n,
+              className: U.trim(rClass.value), pass: h,
+              classCode: U.trim(rCode.value),
+              createdAt: U.nowISO(), selfRegistered: true
+            };
+            return Backend.registerStudent(stu).then(function () { return stu; });
+          });
+        }).then(function (stu) {
+          if (!stu) return;
+          Settings.login({ role: 'student', id: stu.id, name: stu.name, username: stu.username });
+          U.toast('註冊成功，歡迎 ' + stu.name, 'ok');
+          location.hash = '#/student';
+        }).catch(function (e) { U.toast('註冊失敗：' + e.message, 'bad'); });
+      }
+    }
+
+    function field(label, input) {
+      var d = U.el('div');
+      d.appendChild(U.el('label.tiny.muted', { text: label }));
+      d.appendChild(input);
+      return d;
+    }
 
     function doLogin(name, pass) {
       if (!name || !pass) { U.toast('請輸入帳號與密碼', 'bad'); return; }
+      U.toast('驗證中…', null, 1200);
       Backend.getRoster().then(function (list) {
-        var stu = list.filter(function (s) { return s.username === name; })[0];
-        if (!stu) { U.toast('找不到此帳號', 'bad'); return; }
+        var stu = list.filter(function (s) {
+          return String(s.username).toLowerCase() === String(name).toLowerCase();
+        })[0];
+        if (!stu) { U.toast('找不到此帳號，請確認或改用註冊', 'bad', 3000); return; }
         return RQ.crypto.verifyPassword(pass, stu.pass).then(function (ok) {
           if (!ok) { U.toast('密碼不正確', 'bad'); return; }
           Settings.login({ role: 'student', id: stu.id, name: stu.name || stu.username, username: stu.username });
           U.toast('歡迎，' + (stu.name || stu.username), 'ok');
           location.hash = '#/student';
         });
-      });
+      }).catch(function (e) { U.toast('登入失敗：' + e.message, 'bad'); });
     }
+
+    draw('login');
   };
 
   Student.home = function (view) {
@@ -300,7 +382,8 @@
   /* ============================================================
      作答頁
      ============================================================ */
-  var _session = null;   // {quiz, submission, hl:[], startAt}
+  var _session = null;         // {quiz, submission, hls:[], startAt}
+  var _unloadHandler = null;   // 離開頁面前把雲端草稿補送出去
 
   Student.take = function (view, quizId) {
     view.innerHTML = '<div class="empty">載入試卷中…</div>';
@@ -359,7 +442,8 @@
         U.el('div.tiny.muted', { text: (quiz.level ? quiz.level + '・' : '') + (quiz.questions || []).length + ' 題・共 ' + quiz.totalMarks + ' 分' })
       ]),
       U.el('div.row', {}, [
-        U.el('span.tiny.muted', { text: '已用時間 ' }), timerEl
+        U.el('span.tiny.muted', { text: '已用時間 ' }), timerEl,
+        U.el('span', { style: { width: '10px' } }), saveState
       ])
     ]));
     var prog = U.el('div.bar.mt1');
@@ -426,9 +510,27 @@
     grid.appendChild(right);
     view.appendChild(grid);
 
-    function autosave() {
+    var saveState = U.el('span.tiny.faint', { text: '' });
+    var _lastCloud = 0;
+
+    function autosave(force) {
       sub.durationSec = Math.floor((Date.now() - _session.startAt) / 1000);
+      sub.savedAt = U.nowISO();
+      /* ① 本機：每次變動都存，離線也安全 */
       Store.kv.set('draft:' + sub.quizId + ':' + sub.studentId, sub);
+      /* ② 雲端：節流（每 20 秒或強制），換裝置才能繼續 */
+      var now = Date.now();
+      if (Settings.get().cloudDraft !== false && (force || now - _lastCloud > 20000)) {
+        _lastCloud = now;
+        saveState.textContent = '儲存中…';
+        Backend.saveDraft(sub).then(function () {
+          saveState.textContent = '進度已儲存 ' + U.fmtDate(U.nowISO(), true).slice(11);
+        }).catch(function () {
+          saveState.textContent = '（雲端儲存失敗，進度已存在本機）';
+        });
+      } else {
+        saveState.textContent = '進度已存在本機';
+      }
       updateProgress();
     }
     function updateProgress() {
@@ -447,30 +549,72 @@
     }
     _session.autosave = autosave;
 
-    /* 還原草稿 */
-    Store.kv.get('draft:' + sub.quizId + ':' + sub.studentId, null).then(function (d) {
-      if (!d) { updateProgress(); return; }
-      U.confirm('發現未完成的作答草稿，要繼續嗎？', function () {
-        sub.answers = d.answers || {};
-        sub.marks = d.marks || [];
-        sub.vocab = d.vocab || [];
-        sub.notes = d.notes || [];
-        _session.hls.forEach(function (h) { h.marks = sub.marks; h.vocab = sub.vocab; h.render(); });
-        view.querySelectorAll('[data-qid]').forEach(function (card) {
-          var qid = card.getAttribute('data-qid');
-          var q = quiz.questions.filter(function (x) { return x.id === qid; })[0];
-          if (!q) return;
-          var holder = card.querySelector('.q-input');
-          if (!holder) return;
-          holder.innerHTML = '';
-          holder.appendChild(Forms.input(q, sub.answers[qid], {
-            uid: sub.id,
-            onChange: function (v) { sub.answers[qid] = Object.assign({}, sub.answers[qid], v); autosave(); }
-          }));
-        });
-        updateProgress();
+    /* 還原草稿：自動接續，不再問「要不要繼續」 */
+    Backend.getDraft(quiz.id, sub.studentId).then(function (d) {
+      updateProgress();
+      if (!d) return;
+      var hasContent = Object.keys(d.answers || {}).length ||
+        (d.marks || []).length || (d.vocab || []).length;
+      if (!hasContent) return;
+
+      sub.answers = d.answers || {};
+      sub.marks = d.marks || [];
+      sub.vocab = d.vocab || [];
+      sub.notes = d.notes || [];
+
+      _session.hls.forEach(function (h) { h.marks = sub.marks; h.vocab = sub.vocab; h.render(); });
+      U.$$('[data-qid]', view).forEach(function (card) {
+        var qid = card.getAttribute('data-qid');
+        var q = (quiz.questions || []).filter(function (x) { return x.id === qid; })[0];
+        if (!q) return;
+        var holder = card.querySelector('.q-input');
+        if (!holder) return;
+        holder.innerHTML = '';
+        holder.appendChild(Forms.input(q, sub.answers[qid], {
+          uid: sub.id,
+          onChange: function (v) { sub.answers[qid] = Object.assign({}, sub.answers[qid], v); autosave(); }
+        }));
       });
+      updateProgress();
+
+      var n = Object.keys(sub.answers).length;
+      U.toast('已接續上次的進度（' + n + ' 題已作答' + (sub.marks.length ? '、' + sub.marks.length + ' 處標記' : '') + '）', 'ok', 3600);
     });
+
+    /* 離開頁面前強制存一次（sendBeacon 在關閉分頁時仍會送出） */
+    if (_unloadHandler) window.removeEventListener('beforeunload', _unloadHandler);
+    _unloadHandler = function () {
+      try {
+        sub.durationSec = Math.floor((Date.now() - _session.startAt) / 1000);
+        sub.savedAt = U.nowISO();
+        Store.kv.set('draft:' + sub.quizId + ':' + sub.studentId, sub);
+        if (Settings.get().cloudDraft === false) return;
+        var driver = Backend.Cloud.driver();
+        if (driver === 'firebase' && Backend.Firebase.ok()) {
+          var st = Settings.get().fb;
+          var body = JSON.stringify({
+            type: 'draft',
+            id: ('draft::' + sub.quizId + '::' + sub.studentId).replace(/[.#$\/\[\]?:]/g, '_'),
+            quizId: sub.quizId, studentId: sub.studentId, studentName: sub.studentName || '',
+            ts: U.nowISO(), key: '', payload: sub
+          });
+          var u = String(st.dbUrl).replace(/\/+$/, '') + '/rq/' +
+            encodeURIComponent(String(st.classCode || 'default').replace(/[.#$\/\[\]?:]/g, '_')) +
+            '/draft/' + encodeURIComponent(('draft::' + sub.quizId + '::' + sub.studentId).replace(/[.#$\/\[\]?:]/g, '_')) +
+            '.json?auth=' + encodeURIComponent(st._token || '');
+          navigator.sendBeacon && navigator.sendBeacon(u, new Blob([body], { type: 'text/plain' }));
+        } else if (driver === 'appscript') {
+          var url = Settings.get().hook.postUrl;
+          var b2 = JSON.stringify({
+            type: 'draft', id: 'draft::' + sub.quizId + '::' + sub.studentId,
+            quizId: sub.quizId, studentId: sub.studentId, studentName: sub.studentName || '',
+            ts: U.nowISO(), key: (Settings.get().hook || {}).key || '', payload: sub
+          });
+          navigator.sendBeacon && navigator.sendBeacon(url, new Blob([b2], { type: 'text/plain' }));
+        }
+      } catch (e) { /* 關閉分頁時盡力而為 */ }
+    };
+    window.addEventListener('beforeunload', _unloadHandler);
   }
 
   function questionCard(quiz, q, idx, sub, autosave, updateProgress) {

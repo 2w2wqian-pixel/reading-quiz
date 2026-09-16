@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>SMOKE_INIT</title>
+<link rel="stylesheet" href="../assets/css/app.css">
+</head>
+<body>
+<div id="view"></div>
+<div id="toast-root" class="toast-root"></div>
+<div id="modal-root"></div>
+
+<script src="../assets/js/lib/jszip.min.js"></script>
+<script src="../assets/js/core/util.js"></script>
+<script src="../assets/js/core/crypto.js"></script>
+<script src="../assets/js/core/store.js"></script>
+<script src="../assets/js/core/backend.js"></script>
+<script src="../assets/js/core/docx-parser.js"></script>
+<script src="../assets/js/ui/highlighter.js"></script>
+<script src="../assets/js/student.js"></script>
+<script>
+window.__ERR__ = [];
+window.addEventListener('error', function (e) { window.__ERR__.push(String(e.message) + ' @' + e.filename + ':' + e.lineno); });
+function finish(title, payload) {
+  document.title = title;
+  var pre = document.createElement('pre');
+  pre.id = 'result';
+  pre.textContent = JSON.stringify(payload, null, 1);
+  document.body.appendChild(pre);
+  document.body.setAttribute('data-done', '1');
+}
+(async function () {
+  try {
+    var file = new URLSearchParams(location.search).get('f') || 'sample_zh.docx';
+    var res = await fetch(file);
+    if (!res.ok) throw new Error('找不到 ' + file + ' (' + res.status + ')');
+    var ab = await res.arrayBuffer();
+    var r = await RQ.docx.parse(ab, { fileName: file });
+    var container = document.getElementById('view');
+    var counts = { questions: 0, renderErr: 0, qtable: 0, quotes: 0, selects: 0, inputs: 0, textarea: 0, radios: 0 };
+    var qtypes = {};
+    r.questions.forEach(function (q) {
+      counts.questions++;
+      qtypes[q.type] = (qtypes[q.type] || 0) + 1;
+      try {
+        var n = RQ.forms.input(q, {}, { onChange: function () {} });
+        container.appendChild(n);
+        counts.qtable += n.querySelectorAll('table.qtable').length;
+        counts.selects += n.querySelectorAll('select').length;
+        counts.inputs += n.querySelectorAll('input').length;
+        counts.radios += n.querySelectorAll('input[type=radio]').length;
+        counts.textarea += n.querySelectorAll('textarea').length;
+        if (RQ.forms.quotesBlock(q)) counts.quotes++;
+      } catch (e) { counts.renderErr++; window.__ERR__.push('Q' + q.no + ': ' + e.message); }
+    });
+    finish('SMOKE ' + (counts.renderErr ? 'ERR' : 'OK') + ' q=' + counts.questions + ' table=' + counts.qtable,
+      { meta: { lang: r.lang, sections: r.questions.map(function(q){return q.section;}).filter(Boolean).filter(function(v,i,a){return a.indexOf(v)===i;}), title: r.title }, counts: counts, qtypes: qtypes, errors: window.__ERR__ });
+  } catch (e) {
+    finish('SMOKE FAIL', { error: String(e && e.stack || e), errors: window.__ERR__ });
+  }
+})();
+</script>
+</body>
+</html>

@@ -68,6 +68,8 @@ window.RQ = window.RQ || {};
     var t = String(text || ''), total = 0, m;
     var re = /[（(]\s*(\d+(?:\.\d+)?)\s*分\s*[）)]/g;
     while ((m = re.exec(t))) total += parseFloat(m[1]);
+    var re2 = /[（(]\s*(\d+(?:\.\d+)?)\s*marks?\s*[）)]/gi;
+    while ((m = re2.exec(t))) total += parseFloat(m[1]);
     return total;
   };
 

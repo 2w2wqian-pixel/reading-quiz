@@ -16,6 +16,89 @@
   var Teacher = {};
   var state = { tab: 'upload', quizId: null };
 
+  /* ---------- 年級分類（中一～中六） ---------- */
+  var GRADES = ['中一', '中二', '中三', '中四', '中五', '中六'];
+  function gradeSelect(value, attrs) {
+    var sel = U.el('select.input', attrs || {});
+    sel.appendChild(U.el('option', { value: '', text: '（未分類）' }));
+    GRADES.forEach(function (g) { sel.appendChild(U.el('option', { value: g, text: g })); });
+    sel.value = value || '';
+    return sel;
+  }
+
+  /* 某份作業是否指派給某學生 */
+  function assignedTo(meta, studentId) {
+    var a = meta && meta.assignment;
+    if (!a) return false;
+    if (a.all) return true;
+    return (a.ids || []).indexOf(studentId) >= 0;
+  }
+
+  /* ---------- 指派作業 ---------- */
+  function assignDialog(quiz, onSaved) {
+    Backend.getRoster().then(function (list) {
+      list = list || [];
+      var a = quiz.assignment || {};
+      var allChk = U.el('input', { type: 'checkbox' });
+      allChk.checked = !!a.all;
+      var dueInp = U.el('input.input', { type: 'date' });
+      dueInp.value = a.due ? String(a.due).slice(0, 10) : '';
+      var noteInp = U.el('input.input', { placeholder: '例如：下週一前完成', value: a.note || '' });
+
+      var body = U.el('div');
+      body.appendChild(U.el('label.opt', {}, [allChk, U.el('span', { text: ' 指派給全班' })]));
+      var stud = U.el('div.mt2', {
+        style: { maxHeight: '220px', overflow: 'auto', border: '1.5px solid var(--line)', borderRadius: 'var(--r-sm)', padding: '8px' }
+      });
+      var rows = [];
+      if (!list.length) {
+        stud.appendChild(U.el('div.tiny.muted', { text: '名冊尚無學生。學生可自行註冊，或到「④ 學生名冊」新增。' }));
+      } else {
+        list.forEach(function (s) {
+          var chk = U.el('input', { type: 'checkbox' });
+          chk.checked = (a.ids || []).indexOf(s.id) >= 0;
+          rows.push({ id: s.id, chk: chk });
+          stud.appendChild(U.el('label.opt', { style: { marginTop: '4px' } }, [
+            chk, U.el('span', { text: ' ' + (s.name || s.username) + (s.className ? '（' + s.className + '）' : '') })
+          ]));
+        });
+      }
+      body.appendChild(U.el('div.tiny.muted.mt2', { text: '選擇學生（可多選）' }));
+      body.appendChild(stud);
+      body.appendChild(U.el('div.mt2', {}, [U.el('label.tiny.muted', { text: '截止日期（選填）' }), dueInp]));
+      body.appendChild(U.el('div.mt1', {}, [U.el('label.tiny.muted', { text: '備註（選填）' }), noteInp]));
+
+      U.modal({
+        title: '指派作業：' + quiz.title,
+        width: 560,
+        body: body,
+        actions: [
+          { label: '取消', close: true },
+          {
+            label: '清除指派', onClick: function () {
+              quiz.assignment = null;
+              quiz.updatedAt = U.nowISO();
+              Store.quiz.save(quiz).then(function () { U.toast('已清除指派'); onSaved && onSaved(); });
+            }
+          },
+          {
+            label: '儲存', kind: 'primary', onClick: function () {
+              var ids = rows.filter(function (r) { return r.chk.checked; }).map(function (r) { return r.id; });
+              if (!allChk.checked && !ids.length) { U.toast('請選「全班」或至少一位學生', 'bad'); return false; }
+              quiz.assignment = {
+                all: allChk.checked, ids: ids,
+                due: dueInp.value || '', note: U.trim(noteInp.value),
+                assignedAt: U.nowISO()
+              };
+              quiz.updatedAt = U.nowISO();
+              Store.quiz.save(quiz).then(function () { U.toast('已指派作業', 'ok'); onSaved && onSaved(); });
+            }
+          }
+        ]
+      });
+    }).catch(function (e) { U.toast('讀取名冊失敗：' + ((e && e.message) || ''), 'bad'); });
+  }
+
   /* ============================================================
      入口
      ============================================================ */
@@ -244,15 +327,25 @@
     /* 頂端：基本資料 + 動作 */
     var top = U.el('div.card');
     var tInp = U.el('input.input', { value: quiz.title || '' });
-    var lInp = U.el('input.input', { value: quiz.level || '', placeholder: '例如：中二', style: { maxWidth: '160px' } });
+    var lInp = gradeSelect(quiz.level || '', { style: { maxWidth: '160px' } });
     top.appendChild(U.el('div.row.between', {}, [
       U.el('h2.mb0', { text: '微調試卷內容' }),
       U.el('span.tag' + (quiz.published ? '.mint' : '.gray'), { text: quiz.published ? '已發佈' : '尚未發佈' })
     ]));
     top.appendChild(U.el('div.inline-fields.mt2', {}, [
       U.el('div', {}, [U.el('label.tiny.muted', { text: '試卷名稱' }), tInp]),
-      U.el('div', { style: { maxWidth: '180px' } }, [U.el('label.tiny.muted', { text: '年級' }), lInp])
+      U.el('div', { style: { maxWidth: '180px' } }, [U.el('label.tiny.muted', { text: '年級分類' }), lInp])
     ]));
+
+    /* 作業指派狀態 */
+    var asg = quiz.assignment;
+    var asgLine = U.el('div.tiny.mt1', {
+      html: asg
+        ? '📌 <b>已指派</b>：' + (asg.all ? '全班' : ((asg.ids || []).length + ' 位學生')) +
+          (asg.due ? '　截止 ' + asg.due : '') + (asg.note ? '　' + U.esc(asg.note) : '')
+        : '<span class="muted">尚未指派為作業</span>'
+    });
+    top.appendChild(asgLine);
 
     if ((quiz.warnings || []).length) {
       var w = U.el('div.warnbox.mt2');
@@ -266,6 +359,7 @@
     var acts = U.el('div.row.mt2', {}, [
       U.el('button.btn.primary', { text: '儲存', onclick: save }),
       U.el('button.btn.mint', { text: '預覽（學生視角）', onclick: preview }),
+      U.el('button.btn.lav', { text: '指派作業', onclick: assign }),
       U.el('button.btn.sun', { text: '下載 JSON', onclick: download }),
       U.el('button.btn.lav', { text: '發佈到 GitHub', onclick: publish }),
       U.el('button.btn.danger', { text: '刪除試卷', onclick: remove })
@@ -319,6 +413,11 @@
       quiz.level = U.trim(lInp.value);
       quiz.updatedAt = U.nowISO();
       Store.quiz.save(quiz).then(function () { U.toast('已儲存', 'ok'); });
+    }
+    function assign() {
+      quiz.title = U.trim(tInp.value) || quiz.title;
+      quiz.level = U.trim(lInp.value);
+      assignDialog(quiz, function () { Store.quiz.get(quiz.id).then(function (q) { renderEditor(view, q || quiz); }); });
     }
     function preview() {
       quiz.title = U.trim(tInp.value) || quiz.title;
@@ -552,7 +651,7 @@
         return;
       }
       var tbl = U.el('table.tbl');
-      tbl.innerHTML = '<thead><tr><th>試卷</th><th>年級</th><th>題數</th><th>分數</th><th>狀態</th><th>更新</th><th>操作</th></tr></thead>';
+      tbl.innerHTML = '<thead><tr><th>試卷</th><th>年級</th><th>題數</th><th>分數</th><th>狀態</th><th>作業</th><th>更新</th><th>操作</th></tr></thead>';
       var tb = U.el('tbody');
       list.forEach(function (m) {
         var tr = U.el('tr');
@@ -564,9 +663,18 @@
           U.el('span.tag' + (m.published ? '.mint' : '.gray'), { text: m.published ? '已發佈' : '草稿' }),
           m._src === 'published' || m._src === 'both' ? U.el('span.tag.sky', { text: ' repo', style: { marginLeft: '4px' } }) : null
         ]));
+        var a = m.assignment;
+        tr.appendChild(U.el('td', {}, [
+          a ? U.el('span.tag.sun', { text: (a.all ? '全班' : (a.ids || []).length + ' 人') + (a.due ? '・' + a.due : '') })
+            : U.el('span.tiny.faint', { text: '—' })
+        ]));
         tr.appendChild(U.el('td', { text: U.fmtDate(m.createdAt) }));
         var ops = U.el('td');
         ops.appendChild(U.el('a.btn.xs', { href: '#/edit/' + m.id, text: '編輯' }));
+        ops.appendChild(U.el('button.btn.xs.lav', {
+          text: '指派', style: { marginLeft: '4px' },
+          onclick: function () { Store.quiz.get(m.id).then(function (q) { assignDialog(q, function () { view.innerHTML = ''; Teacher.quizzes(view); }); }); }
+        }));
         ops.appendChild(U.el('a.btn.xs', { href: '#/quiz/' + m.id, text: '試作', style: { marginLeft: '4px' } }));
         ops.appendChild(U.el('button.btn.xs', {
           text: '報表', style: { marginLeft: '4px' },

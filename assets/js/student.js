@@ -59,37 +59,23 @@
       }
       wrap.appendChild(box);
 
-    } else if (q.type === 'table' && (q.subQuestions || []).length) {
-      var sub = ans.sub || {};
-      q.subQuestions.forEach(function (s) {
-        var row = U.el('div.subq');
-        row.appendChild(U.el('div.sublbl', { html: U.esc(s.label || '') + (s.prompt ? '　' + U.nl2br(s.prompt) : '') }));
-        if (s.kind === 'tick' && (s.choices || []).length) {
-          var sel = U.el('select.input');
-          sel.appendChild(U.el('option', { value: '', text: '— 請選擇 —' }));
-          s.choices.forEach(function (c) { sel.appendChild(U.el('option', { value: c, text: c })); });
-          sel.value = sub[s.id] || '';
-          if (disabled) sel.disabled = true;
-          else sel.addEventListener('change', function () {
-            sub[s.id] = sel.value;
-            opts.onChange && opts.onChange({ sub: sub });
-          });
-          row.appendChild(sel);
-        } else {
-          var ta2 = U.el('textarea.input', { rows: 2 });
-          ta2.value = sub[s.id] || '';
-          if (disabled) ta2.disabled = true;
-          else ta2.addEventListener('input', U.debounce(function () {
-            sub[s.id] = ta2.value;
-            opts.onChange && opts.onChange({ sub: sub });
-          }, 300));
-          row.appendChild(ta2);
-        }
-        wrap.appendChild(row);
-      });
+    } else if (q.type === 'table') {
+      var tw = Forms.tableInput(q, ans, opts);
+      /* 保險：若整題還原不出任何可作答元件（例如只有選項標記的單列表格），
+         補一個通用作答框，確保每題都答得到 */
+      if (typeof tw.querySelector === 'function' && !tw.querySelector('input,select,textarea')) {
+        var ta3 = U.el('textarea.input', { rows: 3, placeholder: '請在此作答…' });
+        ta3.value = ans.value || '';
+        if (disabled) ta3.disabled = true;
+        else ta3.addEventListener('input', U.debounce(function () {
+          opts.onChange && opts.onChange({ value: ta3.value });
+        }, 300));
+        tw.appendChild(ta3);
+      }
+      wrap.appendChild(tw);
 
     } else {
-      var ta = U.el('textarea.input', { rows: q.type === 'table' ? 4 : 3, placeholder: '請在此作答…' });
+      var ta = U.el('textarea.input', { rows: 3, placeholder: '請在此作答…' });
       ta.value = ans.value || '';
       if (disabled) ta.disabled = true;
       else ta.addEventListener('input', U.debounce(function () {
@@ -110,13 +96,200 @@
         return k + (o ? '. ' + o.text : '');
       }).join('、') || '（未作答）';
     }
-    if (q.type === 'table' && (q.subQuestions || []).length) {
+    if (q.type === 'table') {
       var sub = ans.sub || {};
-      return q.subQuestions.map(function (s) {
-        return (s.label ? s.label + '：' : '') + (sub[s.id] || '（空白）');
-      }).join('\n');
+      if ((q.subQuestions || []).length) {
+        return q.subQuestions.map(function (s) {
+          return (s.label ? s.label + '：' : '') + (sub[s.id] || '（空白）');
+        }).join('\n');
+      }
+      var filled = Object.keys(sub).filter(function (k) { return U.trim(sub[k]); })
+        .map(function (k) { return U.trim(sub[k]); });
+      return filled.length ? filled.join('　/　') : '（未作答）';
     }
     return ans.value || '（未作答）';
+  };
+
+  /* ============================================================
+     表格題：忠實還原成「可填寫」的 HTML 表格
+     （保留原卷的表格樣式：填充格 → 輸入框；T/F/NG → 下拉；
+      組合選擇格 → 選項按鈕）
+     ============================================================ */
+  function _ct(cell) { return U.trim((cell && (cell.visible != null ? cell.visible : cell.text)) || ''); }
+  function _isFill(cell) {
+    var t = _ct(cell);
+    if (t === '') return true;
+    if (/^[＿_　 \t\r\n]{1,}$/.test(t)) return true;             // 只有底線／空格
+    if (/[_＿]/.test(t) && t.length <= 20) return true;          // 底線作答格
+    return false;
+  }
+  function _isHeader(row) {
+    if (!row || row.length < 2) return false;
+    return row.slice(1).every(function (c) {
+      var t = _ct(c);
+      return t.length > 0 && t.length <= 10 && !_isFill(c);
+    });
+  }
+  function _mkInput(key, val, sub, opts) {
+    var inp = U.el('input.input.cell', { type: 'text' });
+    inp.value = val || '';
+    if (opts.disabled) inp.disabled = true;
+    else inp.addEventListener('input', U.debounce(function () {
+      sub[key] = inp.value;
+      opts.onChange && opts.onChange({ sub: sub });
+    }, 300));
+    return inp;
+  }
+  function _mkSelect(key, val, options, sub, opts) {
+    var sel = U.el('select.input');
+    sel.appendChild(U.el('option', { value: '', text: '— 請選擇 —' }));
+    (options || []).filter(Boolean).forEach(function (o) {
+      sel.appendChild(U.el('option', { value: o, text: o }));
+    });
+    sel.value = val || '';
+    if (opts.disabled) sel.disabled = true;
+    else sel.addEventListener('change', function () {
+      sub[key] = sel.value;
+      opts.onChange && opts.onChange({ sub: sub });
+    });
+    return sel;
+  }
+
+  Forms.tableInput = function (q, ans, opts) {
+    opts = opts || {};
+    var sub = ans.sub || {};
+    var wrap = U.el('div.qtable-wrap');
+
+    /* 1) 正確／錯誤／無從判斷（T/F/NG）*/
+    if (q.tableType === 'tfng') {
+      if ((q.subQuestions || []).length) {
+        var t1 = U.el('table.qtable.tfng');
+        q.subQuestions.forEach(function (s) {
+          var tr = U.el('tr');
+          tr.appendChild(U.el('td.qt-stmt', { html: U.nl2br(s.prompt || s.label || '') }));
+          var td = U.el('td.qt-ans');
+          td.appendChild(_mkSelect(s.id, sub[s.id], (s.choices || []).filter(Boolean), sub, opts));
+          tr.appendChild(td);
+          t1.appendChild(tr);
+        });
+        wrap.appendChild(t1);
+        return wrap;
+      }
+      var rows = q.table.rows || [];
+      var hi = _isHeader(rows[0]) ? 0 : -1;
+      var opts1 = hi >= 0 ? rows[hi].slice(1).map(_ct).filter(Boolean) : ['True', 'False', 'Not Given'];
+      var t2 = U.el('table.qtable.tfng');
+      rows.slice(hi >= 0 ? hi + 1 : 1).forEach(function (row, bi) {
+        var label = _ct(row[0]);
+        if (!label) return;
+        var tr = U.el('tr');
+        tr.appendChild(U.el('td.qt-stmt', { text: label }));
+        var td = U.el('td.qt-ans');
+        td.appendChild(_mkSelect(q.id + '_tf' + bi, sub[q.id + '_tf' + bi], opts1, sub, opts));
+        tr.appendChild(td);
+        t2.appendChild(tr);
+      });
+      wrap.appendChild(t2);
+      return wrap;
+    }
+
+    /* 2) 結構化子題（填充／勾選）— 有教師版時 */
+    if ((q.subQuestions || []).length) {
+      var t3 = U.el('table.qtable');
+      q.subQuestions.forEach(function (s) {
+        var tr = U.el('tr');
+        tr.appendChild(U.el('td.qt-label', { html: U.esc(s.label || '') + (s.prompt ? '　' + U.nl2br(s.prompt) : '') }));
+        var td = U.el('td.qt-ans');
+        if (s.kind === 'tick' && (s.choices || []).length) {
+          td.appendChild(_mkSelect(s.id, sub[s.id], s.choices.filter(Boolean), sub, opts));
+        } else {
+          var ta = U.el('textarea.input', { rows: 2 });
+          ta.value = sub[s.id] || '';
+          if (opts.disabled) ta.disabled = true;
+          else ta.addEventListener('input', U.debounce(function () {
+            sub[s.id] = ta.value;
+            opts.onChange && opts.onChange({ sub: sub });
+          }, 300));
+          td.appendChild(ta);
+        }
+        tr.appendChild(td);
+        t3.appendChild(tr);
+      });
+      wrap.appendChild(t3);
+      return wrap;
+    }
+
+    /* 3) 原始表格：忠實還原（填充格 / 組合選擇格）*/
+    var rws = q.table.rows || [];
+    var hid = _isHeader(rws[0]) ? 0 : -1;
+    if (hid >= 0) {
+      var oc = rws[hid].slice(1);
+      var grid = rws.slice(hid + 1).some(function (r) {
+        return r.slice(1).some(function (c) { return c.sym > 0 || /^○+$/.test(_ct(c)); });
+      });
+      if (grid) {
+        var opts2 = oc.map(_ct).filter(Boolean);
+        var tg = U.el('table.qtable.grid');
+        var htr = U.el('tr');
+        htr.appendChild(U.el('th', { html: '&nbsp;' }));
+        opts2.forEach(function (o) { htr.appendChild(U.el('th', { text: o })); });
+        tg.appendChild(htr);
+        rws.slice(hid + 1).forEach(function (row, bi) {
+          var label = _ct(row[0]);
+          var items = label.match(/\([0-9]+\)/g);
+          if (!items) items = [label];
+          items.forEach(function (it, si) {
+            var tr = U.el('tr');
+            tr.appendChild(U.el('td', { text: it || label }));
+            var gname = q.id + '_g' + bi + '_' + si;
+            opts2.forEach(function (opt) {
+              var td = U.el('td');
+              var lab = U.el('label.optcell');
+              var r = U.el('input', { type: 'radio', name: gname, value: opt });
+              r.checked = (sub[gname] === opt);
+              if (opts.disabled) r.disabled = true;
+              else r.addEventListener('change', function () { sub[gname] = opt; opts.onChange && opts.onChange({ sub: sub }); });
+              lab.appendChild(r);
+              td.appendChild(lab);
+              tr.appendChild(td);
+            });
+            tg.appendChild(tr);
+          });
+        });
+        wrap.appendChild(tg);
+        return wrap;
+      }
+    }
+    var tf = U.el('table.qtable');
+    if (hid >= 0) {
+      var h = U.el('tr');
+      rws[hid].forEach(function (c) { h.appendChild(U.el('th', { html: _ct(c) ? U.esc(_ct(c)) : '&nbsp;' })); });
+      tf.appendChild(h);
+    }
+    rws.forEach(function (row, ri) {
+      if (ri === hid) return;
+      /* 略過整列都是空白的「排版空行」 */
+      if (row.every(function (c) { return _ct(c) === ''; })) return;
+      var tr = U.el('tr');
+      row.forEach(function (cell, ci) {
+        var td = U.el('td');
+        if (_isFill(cell)) td.appendChild(_mkInput(q.id + '_r' + ri + 'c' + ci, sub[q.id + '_r' + ri + 'c' + ci], sub, opts));
+        else td.innerHTML = _ct(cell) ? U.esc(_ct(cell)) : '&nbsp;';
+        tr.appendChild(td);
+      });
+      tf.appendChild(tr);
+    });
+    wrap.appendChild(tf);
+    return wrap;
+  };
+
+  Forms.quotesBlock = function (q) {
+    if (!q.quotes || !q.quotes.length) return null;
+    var box = U.el('div.q-quotes');
+    q.quotes.forEach(function (qt) {
+      box.appendChild(U.el('blockquote.q-quote', { html: U.nl2br(U.esc(qt)) }));
+    });
+    return box;
   };
 
   /** 自動批改：只有選擇題能自動 */
@@ -155,6 +328,13 @@
       });
       tbl.appendChild(tb);
       box.appendChild(tbl);
+      if (q.answer) box.appendChild(U.el('div', { html: U.nl2br(q.answer), class: 'mt1' }));
+    } else if (q.type === 'table') {
+      var sub2 = (ans && ans.sub) || {};
+      var keys = Object.keys(sub2).filter(function (k) { return U.trim(sub2[k]); });
+      box.appendChild(U.el('div', {
+        html: '你的填答：<br>' + (keys.length ? U.nl2br(keys.map(function (k) { return U.esc(sub2[k]); }).join('\n')) : '（空白）')
+      }));
       if (q.answer) box.appendChild(U.el('div', { html: U.nl2br(q.answer), class: 'mt1' }));
     } else {
       box.appendChild(U.el('div', { html: U.nl2br(q.answer || '（尚未提供答案）') }));
@@ -320,10 +500,16 @@
         return;
       }
 
-      var grid = U.el('div.grid.g2');
-      quizzes.forEach(function (m) {
-        var done = mine.filter(function (s) { return s.quizId === m.id; });
-        var card = U.el('div.card.mb0');
+      var GRADES = ['中一', '中二', '中三', '中四', '中五', '中六'];
+      function isAssigned(m) {
+        var a = m.assignment;
+        if (!a) return false;
+        if (a.all) return true;
+        return (a.ids || []).indexOf(who.id) >= 0;
+      }
+      function doneOf(m) { return mine.filter(function (s) { return s.quizId === m.id; }); }
+      function quizCard(m, done, isHomework) {
+        var card = U.el('div.card.mb0' + (isHomework && !done.length ? '.tinted' : ''));
         card.appendChild(U.el('div.row.between', {}, [
           U.el('h3.mb0', { html: U.esc(m.title) }),
           done.length ? U.el('span.tag.mint', { text: '已完成 ' + done.length + ' 次' }) : U.el('span.tag', { text: '未作答' })
@@ -331,6 +517,13 @@
         card.appendChild(U.el('div.tiny.muted.mt1', {
           text: (m.level ? m.level + '・' : '') + (m.questionCount || 0) + ' 題・' + (m.totalMarks || 0) + ' 分'
         }));
+        if (m.assignment && (m.assignment.due || m.assignment.note)) {
+          card.appendChild(U.el('div.tiny.mt1', {
+            html: '<span class="tag.sun">作業</span> ' +
+              (m.assignment.due ? '截止 ' + U.esc(m.assignment.due) : '') +
+              (m.assignment.note ? '　' + U.esc(m.assignment.note) : '')
+          }));
+        }
         if (done.length) {
           var last = done[0];
           card.appendChild(U.el('div.tiny.mt1', {
@@ -345,9 +538,50 @@
           btns.appendChild(U.el('a.btn.sm', { href: '#/result/' + done[0].id, text: '查看上次結果' }));
         }
         card.appendChild(btns);
-        grid.appendChild(card);
-      });
-      box.appendChild(grid);
+        return card;
+      }
+
+      var assignedList = quizzes.filter(isAssigned);
+      var others = quizzes.filter(function (m) { return !isAssigned(m); });
+
+      if (assignedList.length) {
+        var todo = assignedList.filter(function (m) { return !doneOf(m).length; });
+        var doneA = assignedList.filter(function (m) { return doneOf(m).length; });
+        box.appendChild(U.el('h2.mt3', { text: '📌 老師指派的作業' }));
+        if (todo.length) {
+          var g0 = U.el('div.grid.g2');
+          todo.forEach(function (m) { g0.appendChild(quizCard(m, doneOf(m), true)); });
+          box.appendChild(g0);
+        } else {
+          box.appendChild(U.el('div.tiny.muted', { text: '指派的作業都完成了，太厲害了！🎉' }));
+        }
+        if (doneA.length) {
+          box.appendChild(U.el('div.tiny.muted.mt1', {
+            text: '已完成：' + doneA.map(function (m) { return m.title; }).join('、')
+          }));
+        }
+      }
+
+      if (others.length) {
+        box.appendChild(U.el('h2.mt3', { text: assignedList.length ? '其他試卷' : '可作答的試卷' }));
+        var map = {}, order = [];
+        others.forEach(function (m) {
+          var g = m.level || '其他';
+          if (!map[g]) { map[g] = []; order.push(g); }
+          map[g].push(m);
+        });
+        order.sort(function (a, b) {
+          var ia = GRADES.indexOf(a), ib = GRADES.indexOf(b);
+          if (ia < 0) ia = 99; if (ib < 0) ib = 99;
+          return ia - ib;
+        });
+        order.forEach(function (g) {
+          if (order.length > 1) box.appendChild(U.el('h3.mt2', { text: g }));
+          var grid = U.el('div.grid.g2');
+          map[g].forEach(function (m) { grid.appendChild(quizCard(m, doneOf(m), false)); });
+          box.appendChild(grid);
+        });
+      }
 
       /* 生詞本 */
       box.appendChild(U.el('h2.mt3', { text: '我的生詞本' }));
@@ -385,6 +619,60 @@
   var _session = null;         // {quiz, submission, hls:[], startAt}
   var _unloadHandler = null;   // 離開頁面前把雲端草稿補送出去
 
+  /* ---------- 分卷/分篇：把題目切成可分別提交的群組 ---------- */
+  function groupQuestions(quiz) {
+    var qs = (quiz && quiz.questions) || [];
+    var hasSection = qs.some(function (q) { return q.section; });
+    if (hasSection) {
+      var map = {}, order = [];
+      qs.forEach(function (q) {
+        var k = q.section || '其他';
+        if (!map[k]) { map[k] = []; order.push(k); }
+        map[k].push(q);
+      });
+      return order.map(function (k) {
+        return {
+          key: 'sec:' + k, label: k, questions: map[k],
+          marks: map[k].reduce(function (a, q) { return a + (q.marks || 0); }, 0)
+        };
+      });
+    }
+    var ps = (quiz && quiz.passages) || [];
+    if (ps.length > 1) {
+      var pm = {}, po = [];
+      qs.forEach(function (q) {
+        var k = q.passageId || (ps[0] && ps[0].id) || 'p1';
+        if (!pm[k]) { pm[k] = []; po.push(k); }
+        pm[k].push(q);
+      });
+      /* 只保留真的有題目的篇章，並依原順序編號 */
+      var withQ = po.filter(function (k) { return pm[k].length; });
+      return withQ.map(function (k, i) {
+        var p = ps.filter(function (x) { return x.id === k; })[0];
+        return {
+          key: 'pass:' + k,
+          label: '第 ' + (i + 1) + ' 篇' + (p && p.title ? '：' + p.title : ''),
+          questions: pm[k],
+          marks: pm[k].reduce(function (a, q) { return a + (q.marks || 0); }, 0)
+        };
+      });
+    }
+    return [{ key: 'all', label: '', questions: qs, marks: (quiz && quiz.totalMarks) || 0 }];
+  }
+  function scopeKey(s) { return (s && s.scope && s.scope.key) ? s.scope.key : null; }
+  function isGroupSubmitted(past, key) {
+    return (past || []).some(function (s) {
+      if (!s.submittedAt) return false;
+      var k = scopeKey(s);
+      return k === null ? true : k === key;   // 無 scope 代表整份卷，涵蓋全部群組
+    });
+  }
+  function groupSubmission(past, key) {
+    return (past || []).filter(function (s) {
+      return s.submittedAt && (scopeKey(s) === null || scopeKey(s) === key);
+    })[0];
+  }
+
   Student.take = function (view, quizId) {
     view.innerHTML = '<div class="empty">載入試卷中…</div>';
     var who = Settings.who();
@@ -396,23 +684,39 @@
       var quiz = r[0];
       if (!quiz) { view.innerHTML = '<div class="empty">找不到這份試卷</div>'; return; }
       var past = (r[1] || []).filter(function (s) { return s.quizId === quizId; });
-      if (past.length && !Settings.get().allowRetake) {
+      var groups = groupQuestions(quiz);
+      var grouped = groups.length > 1;
+      var allDone = grouped
+        ? groups.every(function (g) { return isGroupSubmitted(past, g.key); })
+        : past.length > 0;
+      if (allDone && !Settings.get().allowRetake) {
         view.innerHTML = '';
+        var doneSubs = grouped
+          ? groups.map(function (g) { return groupSubmission(past, g.key); }).filter(Boolean)
+          : [past[0]];
+        var links = U.el('div.row', { style: { justifyContent: 'center', flexWrap: 'wrap', gap: '6px' } });
+        doneSubs.forEach(function (s) {
+          links.appendChild(U.el('a.btn.sm', {
+            href: '#/result/' + s.id,
+            text: (s.scope && s.scope.label ? s.scope.label + '：' : '') + '查看結果'
+          }));
+        });
         view.appendChild(U.el('div.card.center', {}, [
-          U.el('h2', { text: '你已經作答過這份試卷' }),
+          U.el('h2', { text: grouped ? '你已經作答過這份試卷' : '你已經作答過這份試卷' }),
           U.el('p.muted', { text: '如需重做，請先請老師開啟「允許重複作答」。' }),
-          U.el('div.row', { style: { justifyContent: 'center' } }, [
-            U.el('a.btn.primary', { href: '#/result/' + past[0].id, text: '查看結果' }),
+          links,
+          U.el('div.row.mt2', { style: { justifyContent: 'center' } }, [
             U.el('a.btn', { href: '#/student', text: '回學生專區' })
           ])
         ]));
         return;
       }
-      startQuiz(view, quiz, who, past.length + 1);
+      startQuiz(view, quiz, who, past.length + 1, past);
     });
   };
 
-  function startQuiz(view, quiz, who, attempt) {
+  function startQuiz(view, quiz, who, attempt, past) {
+    past = past || [];
     var sub = {
       id: U.uid('sub'),
       quizId: quiz.id,
@@ -493,20 +797,50 @@
     grid.appendChild(left);
 
     var right = U.el('div');
-    right.appendChild(U.el('h3', { text: '題目' }));
-    (quiz.questions || []).forEach(function (q, i) {
-      right.appendChild(questionCard(quiz, q, i, sub, autosave, updateProgress));
-    });
+    var groups = groupQuestions(quiz);
+    var grouped = groups.length > 1;
+    right.appendChild(U.el('h3', { text: grouped ? '題目（可分段提交）' : '題目' }));
+    if (grouped) {
+      right.appendChild(U.el('div.tiny.muted.mb1', {
+        text: '本卷分為 ' + groups.length + ' 個部分，你可以逐部分作答，並分別提交。'
+      }));
+    }
+    groups.forEach(function (g) {
+      var locked = grouped && isGroupSubmitted(past, g.key);
+      var box = U.el('div');
+      if (grouped) {
+        box.appendChild(U.el('div.row.between.mt3', {}, [
+          U.el('h3.mb0', { text: g.label + '（' + g.questions.length + ' 題・' + g.marks + ' 分）' }),
+          locked ? U.el('span.tag.mint', { text: '✔ 已提交' }) : U.el('span.tag.gray', { text: '未提交' })
+        ]));
+      }
+      g.questions.forEach(function (q, i) {
+        box.appendChild(questionCard(quiz, q, i, sub, autosave, updateProgress, locked));
+      });
 
-    var submitRow = U.el('div.card.center.mt2', {}, [
-      U.el('div.tiny.muted', { text: '提交後即可看到正確答案；老師會收到你的作答、標記與生詞。' }),
-      U.el('div.row.mt2', { style: { justifyContent: 'center' } }, [
-        U.el('button.btn.primary', {
-          text: '提交作答', onclick: function () { submit(quiz, sub, view); }
-        })
-      ])
-    ]);
-    right.appendChild(submitRow);
+      var foot = U.el('div.card.center.mt2');
+      if (!grouped) {
+        foot.appendChild(U.el('div.tiny.muted', { text: '提交後即可看到正確答案；老師會收到你的作答、標記與生詞。' }));
+        foot.appendChild(U.el('div.row.mt2', { style: { justifyContent: 'center' } }, [
+          U.el('button.btn.primary', { text: '提交作答', onclick: function () { submit(quiz, sub, view, null); } })
+        ]));
+      } else if (locked) {
+        var gs = groupSubmission(past, g.key);
+        foot.appendChild(U.el('div.tiny.muted', { text: '這部分已提交，無法再修改。' }));
+        if (gs) {
+          foot.appendChild(U.el('div.row.mt1', { style: { justifyContent: 'center' } }, [
+            U.el('a.btn.sm', { href: '#/result/' + gs.id, text: '查看「' + g.label + '」結果' })
+          ]));
+        }
+      } else {
+        foot.appendChild(U.el('div.tiny.muted', { text: '提交後即可看到這部分的答案，其他部分不受影響。' }));
+        foot.appendChild(U.el('div.row.mt2', { style: { justifyContent: 'center' } }, [
+          U.el('button.btn.primary', { text: '提交「' + g.label + '」', onclick: function () { submit(quiz, sub, view, g); } })
+        ]));
+      }
+      box.appendChild(foot);
+      right.appendChild(box);
+    });
     grid.appendChild(right);
     view.appendChild(grid);
 
@@ -564,6 +898,7 @@
 
       _session.hls.forEach(function (h) { h.marks = sub.marks; h.vocab = sub.vocab; h.render(); });
       U.$$('[data-qid]', view).forEach(function (card) {
+        if (card.getAttribute('data-locked')) return;   // 已提交的部分不還原為可編輯
         var qid = card.getAttribute('data-qid');
         var q = (quiz.questions || []).filter(function (x) { return x.id === qid; })[0];
         if (!q) return;
@@ -617,8 +952,9 @@
     window.addEventListener('beforeunload', _unloadHandler);
   }
 
-  function questionCard(quiz, q, idx, sub, autosave, updateProgress) {
+  function questionCard(quiz, q, idx, sub, autosave, updateProgress, disabled) {
     var card = U.el('div.q', { dataset: { qid: q.id } });
+    if (disabled) card.setAttribute('data-locked', '1');
     var head = U.el('div.q-head');
     head.appendChild(U.el('div.q-no', { text: String(q.no != null ? q.no : idx + 1) }));
     var stem = U.el('div.q-stem');
@@ -632,9 +968,13 @@
     head.appendChild(stem);
     card.appendChild(head);
 
+    var qb = Forms.quotesBlock(q);
+    if (qb) card.appendChild(qb);
+
     var holder = U.el('div.q-input');
     holder.appendChild(Forms.input(q, sub.answers[q.id], {
       uid: sub.id,
+      disabled: !!disabled,
       onChange: function (v) {
         sub.answers[q.id] = Object.assign({}, sub.answers[q.id], v);
         autosave(); updateProgress();
@@ -644,53 +984,88 @@
     return card;
   }
 
-  function submit(quiz, sub, view) {
-    var total = (quiz.questions || []).length;
-    var answered = quiz.questions.filter(function (q) {
+  function submit(quiz, sub, view, group) {
+    var qs = group ? group.questions : (quiz.questions || []);
+    var total = qs.length;
+    var answered = qs.filter(function (q) {
       var a = sub.answers[q.id];
       if (!a) return false;
       if (q.type === 'mcq') return (a.value || []).length > 0;
-      if (q.type === 'table' && (q.subQuestions || []).length) {
-        return Object.keys(a.sub || {}).some(function (k) { return U.trim(a.sub[k]); });
+      if (q.type === 'table') {
+        return Object.keys(a.sub || {}).some(function (k) { return U.trim(a.sub[k]); }) || U.trim(a.value || '') !== '';
       }
       return U.trim(a.value || '') !== '';
     }).length;
 
     U.modal({
-      title: '確定提交？',
+      title: group ? ('確定提交「' + group.label + '」？') : '確定提交？',
       body: '<p>已作答 <b>' + answered + '</b> / ' + total + ' 題。</p>' +
-        (answered < total ? '<p class="warnbox">還有 ' + (total - answered) + ' 題未作答，提交後就不能再修改囉。</p>' : ''),
+        (answered < total ? '<p class="warnbox">還有 ' + (total - answered) + ' 題未作答，提交後就不能再修改囉。</p>' : '') +
+        (group ? '<p class="tiny muted">其他部分不受影響，可稍後再提交。</p>' : ''),
       actions: [
         { label: '再檢查一下' },
         {
           label: '確定提交', kind: 'primary', onClick: function () {
-            doSubmit(quiz, sub, view);
+            doSubmit(quiz, sub, view, group);
           }
         }
       ]
     });
   }
 
-  function doSubmit(quiz, sub, view) {
-    if (_session.timer) clearInterval(_session.timer);
+  function doSubmit(quiz, sub, view, group) {
+    var qs = group ? group.questions : (quiz.questions || []);
+    if (_session.timer && !group) clearInterval(_session.timer);
 
     var auto = 0, autoMax = 0;
-    quiz.questions.forEach(function (q) {
+    qs.forEach(function (q) {
       var got = Forms.autoScore(q, sub.answers[q.id]);
       if (got !== null) { auto += got; autoMax += (q.marks || 0); }
     });
-    sub.submittedAt = U.nowISO();
-    sub.durationSec = Math.floor((Date.now() - _session.startAt) / 1000);
-    sub.score = {
-      auto: auto, autoMax: autoMax,
-      manual: 0, total: auto, max: quiz.totalMarks || 0,
-      graded: false
+
+    var scopedAnswers = {};
+    qs.forEach(function (q) { if (sub.answers[q.id]) scopedAnswers[q.id] = sub.answers[q.id]; });
+
+    var out = {
+      id: U.uid('sub'),
+      quizId: quiz.id,
+      quizTitle: quiz.title,
+      studentId: sub.studentId,
+      studentName: sub.studentName,
+      username: sub.username,
+      attempt: sub.attempt,
+      scope: group ? {
+        type: group.key.indexOf('sec:') === 0 ? 'section'
+          : (group.key.indexOf('pass:') === 0 ? 'passage' : 'all'),
+        key: group.key,
+        label: group.label
+      } : null,
+      startedAt: sub.startedAt,
+      submittedAt: U.nowISO(),
+      durationSec: Math.floor((Date.now() - _session.startAt) / 1000),
+      answers: group ? scopedAnswers : sub.answers,
+      marks: sub.marks || [],
+      vocab: sub.vocab || [],
+      notes: sub.notes || [],
+      score: {
+        auto: auto, autoMax: autoMax,
+        manual: 0, total: auto,
+        max: group ? group.marks : (quiz.totalMarks || 0),
+        graded: false
+      }
     };
 
-    Backend.saveSubmission(sub).then(function (saved) {
-      Store.kv.set('draft:' + sub.quizId + ':' + sub.studentId, null);
-      U.toast('已提交，感謝作答！', 'ok');
-      location.hash = '#/result/' + saved.id;
+    Backend.saveSubmission(out).then(function (saved) {
+      if (!group) {
+        Store.kv.set('draft:' + sub.quizId + ':' + sub.studentId, null);
+        U.toast('已提交，感謝作答！', 'ok');
+        location.hash = '#/result/' + saved.id;
+      } else {
+        if (_session.timer) clearInterval(_session.timer);
+        U.toast('已提交「' + group.label + '」！可繼續作答其他部分。', 'ok', 3600);
+        /* 重新載入作答頁：已提交的部分會被鎖定，其餘仍可繼續 */
+        Student.take(view, quiz.id);
+      }
     }).catch(function (e) {
       U.toast('提交失敗：' + e.message, 'bad');
     });
@@ -712,8 +1087,18 @@
     var s = sub.score || { total: 0, max: 0 };
     var pct = U.percent(s.total, s.max);
 
+    /* 分段提交：只檢討這一份提交涵蓋的題目 */
+    var qs = quiz.questions || [];
+    if (sub.scope && sub.scope.key) {
+      var g = groupQuestions(quiz).filter(function (x) { return x.key === sub.scope.key; })[0];
+      if (g) qs = g.questions;
+    }
+
     var card = U.el('div.score-card');
     card.appendChild(U.el('h2.mb0', { html: U.esc(quiz.title) }));
+    if (sub.scope && sub.scope.label) {
+      card.appendChild(U.el('div.mt1', {}, [U.el('span.tag.sun', { text: sub.scope.label + '（分段提交）' })]));
+    }
     card.appendChild(U.el('div.score-num.mt1', {
       html: (s.total || 0) + '<small> / ' + (s.max || 0) + ' 分</small>'
     }));
@@ -732,10 +1117,13 @@
     var row = U.el('div.row.mt2', {}, [
       U.el('a.btn', { href: '#/student', text: '回學生專區' })
     ]);
+    if (sub.scope && sub.scope.key) {
+      row.appendChild(U.el('a.btn.primary', { href: '#/quiz/' + quiz.id, text: '繼續作答其他部分' }));
+    }
     view.appendChild(row);
 
     /* 逐題檢討 */
-    (quiz.questions || []).forEach(function (q, i) {
+    qs.forEach(function (q, i) {
       var box = U.el('div.q');
       var head = U.el('div.q-head');
       head.appendChild(U.el('div.q-no', { text: String(q.no != null ? q.no : i + 1) }));
@@ -743,6 +1131,9 @@
       stem.appendChild(U.el('div', { html: U.esc(q.stem) }));
       head.appendChild(stem);
       box.appendChild(head);
+
+      var qb2 = Forms.quotesBlock(q);
+      if (qb2) box.appendChild(qb2);
 
       var ans = sub.answers[q.id] || {};
       box.appendChild(U.el('div.ansbox.mt1', {}, [
@@ -780,5 +1171,6 @@
     }
   }
 
+  Student._internal = { groupQuestions: groupQuestions, isGroupSubmitted: isGroupSubmitted, scopeKey: scopeKey };
   RQ.student = Student;
 })(window.RQ);

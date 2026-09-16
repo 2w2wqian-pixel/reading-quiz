@@ -391,7 +391,9 @@
       totalMarks: q.totalMarks || 0,
       passageCount: (q.passages || []).length,
       createdAt: q.createdAt || q.updatedAt || U.nowISO(),
-      published: !!q.published, _src: src
+      published: !!q.published,
+      assignment: q.assignment || null,
+      _src: src
     };
   }
 

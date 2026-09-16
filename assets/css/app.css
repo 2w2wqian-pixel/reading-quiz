@@ -301,6 +301,30 @@ table.tbl tr:nth-child(even) td{background:#FFFDF7}
 .subq+.subq{margin-top:8px}
 .subq .sublbl{font-size:13px;color:var(--ink-soft);font-weight:700;margin-bottom:4px}
 
+/* 表格題：忠實還原成可填寫的表格 */
+.qtable-wrap{margin-top:10px;overflow-x:auto}
+table.qtable{border-collapse:collapse;width:100%;background:#FFFDF8;border:2px solid var(--line);border-radius:var(--r-sm);overflow:hidden}
+table.qtable th,table.qtable td{
+  border:1px solid var(--line);padding:8px 10px;vertical-align:middle;font-size:14.5px;line-height:1.6;
+}
+table.qtable th{background:var(--cream-2);color:var(--ink);font-weight:700;text-align:left}
+table.qtable td .input.cell{width:100%;min-width:80px;box-sizing:border-box;font-family:var(--font-cn)}
+table.qtable td textarea.input{width:100%;box-sizing:border-box}
+table.qtable.tfng td.qt-stmt{font-weight:600}
+table.qtable.tfng td.qt-ans,table.qtable td.qt-ans{width:42%;min-width:160px}
+table.qtable.grid td,table.qtable.grid th{text-align:center}
+label.optcell{display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:4px}
+label.optcell input{margin:0}
+/* 引文 / 參考文字：獨立引用區塊 */
+.q-quotes{margin:10px 0 2px;display:flex;flex-direction:column;gap:8px}
+blockquote.q-quote{
+  margin:0;padding:10px 14px;border-left:5px solid var(--pink);
+  background:#FFF6F9;border-radius:0 var(--r-sm) var(--r-sm) 0;
+  font-size:15px;line-height:1.9;color:var(--ink);white-space:pre-wrap;
+}
+blockquote.q-quote::before{content:"引文";display:inline-block;font-size:11px;font-weight:700;color:var(--pink-deep);
+  background:#FDE3EC;border-radius:6px;padding:1px 7px;margin-right:8px;vertical-align:middle;letter-spacing:1px}
+
 /* ---------- Result ---------- */
 .score-card{
   border:2px solid var(--line);border-radius:20px;padding:22px;text-align:center;

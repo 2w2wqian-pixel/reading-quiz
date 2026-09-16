@@ -11,37 +11,21 @@
   var U = RQ.util;
   var COLORS = ['yellow', 'green', 'blue', 'pink', 'orange'];
 
-  function offsetIn(root, node, offset) {
-    if (!root) return null;
-    if (node.nodeType === 3) {
-      var n = 0;
-      var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
-      while (w.nextNode()) {
-        if (w.currentNode === node) return n + offset;
-        n += w.currentNode.nodeValue.length;
-      }
+  /**
+   * 計算 node/offset 在容器 root（.ptext）內的字元位移。
+   * 用 Range 量「從頭到選取端點」的文字長度，對文字節點或元素節點都精準，
+   * 不受既有螢光標籤（巢狀 <span>）影響 —— 解決「選兩個字卻只高亮一個」的偏移誤差。
+   */
+  function charOffset(root, node, offset) {
+    if (!root || !node) return null;
+    try {
+      var pre = document.createRange();
+      pre.selectNodeContents(root);
+      pre.setEnd(node, offset);
+      return (pre.toString() || '').length;
+    } catch (e) {
       return null;
     }
-    // 元素是錨點：用子節點累積長度
-    var acc = 0;
-    var kids = node.childNodes;
-    for (var i = 0; i < offset && i < kids.length; i++) acc += (kids[i].textContent || '').length;
-    var probe = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
-    var total = 0;
-    while (probe.nextNode()) {
-      if (probe.currentNode === node || node.contains && node.contains(probe.currentNode)) {
-        // 元素本身不是文字節點，往前累積到它為止
-        var w2 = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
-        var t = 0;
-        while (w2.nextNode()) {
-          if (node.contains(w2.currentNode) || w2.currentNode === node) break;
-          t += w2.currentNode.nodeValue.length;
-        }
-        return t + acc;
-      }
-      total += probe.currentNode.nodeValue.length;
-    }
-    return total;
   }
 
   function paragraphEl(node, container) {
@@ -162,8 +146,8 @@
     var startInner = startP.querySelector('.ptext') || startP;
     var endInner = endP.querySelector('.ptext') || endP;
 
-    var s = offsetIn(startInner, range.startContainer, range.startOffset);
-    var e = offsetIn(endInner, range.endContainer, range.endOffset);
+    var s = charOffset(startInner, range.startContainer, range.startOffset);
+    var e = charOffset(endInner, range.endContainer, range.endOffset);
     if (s === null || e === null) return;
 
     if (spIdx === epIdx) {

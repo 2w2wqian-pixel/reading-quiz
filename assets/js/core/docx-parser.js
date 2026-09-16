@@ -66,6 +66,57 @@
   var RE_DONE  = /^[\s\u3000]*[—–－]\s*完\s*[—–－][\s\u3000]*$/;
   var RE_ANAL  = /^[\s\u3000]*答\s*案\s*分\s*析\s*[：:]/;
   var RE_REF   = /^[\s\u3000]*(參考答案|學生言之成理|以下為參考)/;
+  /* 甲部／乙部 等分卷標記（注意：文中多為全形空格 U+3000；CJK 後無 \b 詞界） */
+  var RE_SECTION = /^[\s\u3000]*[甲乙丙丁戊己庚辛壬癸][\s\u3000]*部/;
+  /* 引文（給學生看的參考文字，不是答案）的強信號 */
+  function isQuoteLike(b) {
+    if (b.kind !== 'p') return false;
+    var t = U.trim(b.text);
+    if (!t) return false;
+    if (b.options && b.options.length) return false;
+    if (t.indexOf('？') >= 0 || t.indexOf('?') >= 0) return false;
+    if (/^引文|^以下引文|（第.+段）/.test(t)) return true;
+    /* 含開引號（「『“(（《）且夠長，才是引文；避免誤抓以 。結尾的題幹 */
+    if (t.length >= 10 && /[「『“(（《]/.test(t)) return true;
+    return false;
+  }
+  /* 英文選項段落：A. / B) / C、 … */
+  function isEnglishOption(b) {
+    if (b.kind !== 'p') return false;
+    var t = U.trim(b.text);
+    if (!t) return false;
+    return /^[A-H][.、)]\s+/.test(t);
+  }
+  /* 真／假／無從判斷、True/False/Not Given 表格 */
+  function isTFNG(headerCells) {
+    var joined = (headerCells || []).join(' ');
+    return /正確|錯誤|無從判斷/i.test(joined) || /true|false|not given/i.test(joined);
+  }
+
+  /* 英文閱讀文章：介於 "Reading Text" 與 "END OF READING TEXT" 之間的
+     段落與表格（表格取其最長、非頁碼那一格） */
+  function extractEnglishArticle(blocks, from, to) {
+    var paras = [];
+    for (var k = from + 1; k < to; k++) {
+      var b = blocks[k];
+      if (b.kind === 'p') {
+        var t = U.trim(b.text);
+        if (t && !/^END OF/i.test(t)) paras.push(t);
+      } else if (b.kind === 'tr') {
+        var best = '', bestLen = 0;
+        (b.cells || []).forEach(function (c) {
+          var v = U.trim(c.text || '');
+          if (/^\d{1,4}$/.test(v)) return;            // 略過頁碼邊欄
+          if (v.length > bestLen) { bestLen = v.length; best = v; }
+        });
+        if (best) paras.push(best);
+      }
+    }
+    paras = paras.filter(function (p) { return p.length > 1; });
+    return paras.length
+      ? [{ id: 'p1', title: 'Reading Text', paragraphs: paras, notes: [] }]
+      : [];
+  }
 
   /* ============================================================
      低階：XML → tokens / blocks
@@ -194,6 +245,18 @@
       }
     });
     if (cur) opts.push(cur);
+
+    /* 後備：純文字裡的「A○ B○ C○ D○」或「A、B、C、D」風格（答題簿常見） */
+    if (opts.length < 2) {
+      var full = tokensText(tokens);
+      var m = full.match(/([A-Ha-h])\s*[○●\.)、，]?\s*([A-Ha-h])\s*[○●\.)、，]?\s*([A-Ha-h])\s*[○●\.)、，]?\s*([A-Ha-h])/);
+      if (m) {
+        opts = [m[1], m[2], m[3], m[4]].map(function (k) {
+          return { key: k.toUpperCase(), text: '', red: false };
+        });
+      }
+    }
+
     return opts
       .map(function (o) {
         return {
@@ -202,7 +265,7 @@
           red: !!o.red
         };
       })
-      .filter(function (o) { return o.text.length > 0; });
+      .filter(function (o) { return o.text.length > 0 || /^[A-Ha-h]$/.test(o.key); });
   }
 
   /** 段落（w:p）→ block */
@@ -295,15 +358,25 @@
     return -1;
   }
 
+  /* 題號起手：數字 + 一個「內容起頭字元」（中文字 / 《「『“ / 英文字母）。
+     許多題目的主幹並沒有（n分）或「？」，但仍是獨立題目，必須被偵測為題號起點，
+     否則會被併入上一題，造成「題目被吞掉、表格串味」的顯示錯亂。 */
+  var RE_QFIRST = /[《「『“(（\u300a\u300c\u300e\u201cA-Za-z]/;
+  var RE_QVERB = /[試回填選判解翻說寫根從比概歸指描請何哪為下分簡陳概答問想想像歸納辨識說明]/;
   function isQStart(b) {
     if (b.kind !== 'p') return false;
     var t = b.text;
     var m = t.match(RE_QNO);
     if (!m) return false;
-    if (t.length < 6) return false;
-    if (!U.cjk.test(m[2])) return false;
-    if (!(RE_MARKS.test(t) || t.indexOf('？') >= 0 || t.indexOf('?') >= 0)) return false;
-    return true;
+    if (t.length < 5) return false;
+    var c2 = m[2];
+    if (!(U.cjk.test(c2) || RE_QFIRST.test(c2))) return false;
+    /* 強信號：有分數或問號 */
+    if (RE_MARKS.test(t) || t.indexOf('？') >= 0 || t.indexOf('?') >= 0) return true;
+    /* 次級信號：去掉題號後的句子開頭含常見「題目指令動詞」 */
+    var body = t.replace(/^[\s\u3000]*\d{1,2}[\s　]*/, '').slice(0, 8);
+    if (RE_QVERB.test(body)) return true;
+    return false;
   }
   function qno(b) { var m = b.text.match(RE_QNO); return m ? parseInt(m[1], 10) : null; }
 
@@ -366,9 +439,10 @@
 
   /* ---------- 題目（學生版 / 教師版共用收集器） ---------- */
   function collectQuestions(blocks, from, to, isTeacher) {
-    var qs = [], i = from, curPassage = 0;
-    while (i < to) {
+    var qs = [], i = from, curPassage = 0, curSection = null;
+      while (i < to) {
       var b = blocks[i];
+      if (b.kind === 'p' && RE_SECTION.test(b.text)) { curSection = U.trim(b.text).slice(0, 2); i++; continue; }
       if (b.kind === 'p' && b.text.length <= 20 && RE_PASS.test(b.text)) { curPassage++; i++; continue; }
       if (!isQStart(b)) { i++; continue; }
 
@@ -381,10 +455,12 @@
         skills: sk.skills,
         marks: U.sumMarks(b.text) || 0,
         passageIndex: curPassage,
+        section: curSection,
         type: 'text',
         options: [],
         subQuestions: [],
         table: null,
+        quotes: [],
         answer: '',
         answerKeys: [],
         explanation: '',
@@ -394,7 +470,10 @@
       var j = i + 1, inAnalysis = false;
       while (j < to) {
         var nb = blocks[j];
-        if (isQStart(nb) || (nb.kind === 'p' && nb.text.length <= 20 && RE_PASS.test(nb.text))) break;
+        /* 遇上「甲部／乙部」等分卷標記必須在此停住，否則會被併入上一題的內容，
+           導致分卷標記被跳過、後續題目全被誤歸到前一個 section */
+        if (isQStart(nb) || RE_SECTION.test(nb.text) ||
+            (nb.kind === 'p' && nb.text.length <= 20 && RE_PASS.test(nb.text))) break;
 
         if (nb.kind === 'tr') {
           if (isGridRow(nb)) {
@@ -412,6 +491,23 @@
         } else {
           var txt = U.trim(nb.text);
           if (!txt) { j++; continue; }
+
+          /* 引文：給學生看的參考文字，另存為 quotes 單獨呈現 */
+          if (isQuoteLike(nb)) { q.quotes.push(txt); j++; continue; }
+
+          /* 英文選項段落：A. … B. … C. … D. … 接在題幹後 */
+          if (isEnglishOption(nb)) {
+            var grp = [];
+            while (j < to && isEnglishOption(blocks[j])) {
+              var ot = U.trim(blocks[j].text);
+              var m = ot.match(/^([A-H])[.、)]\s+(.*)$/);
+              if (m) grp.push({ key: m[1], text: U.trim(m[2]) });
+              j++;
+            }
+            q.options = q.options.concat(grp);
+            continue;
+          }
+
           if (RE_ANAL.test(txt)) {
             inAnalysis = true;
             q.explanation += (q.explanation ? '\n' : '') + txt.replace(RE_ANAL, '');
@@ -428,6 +524,11 @@
           }
         }
         j++;
+      }
+
+      /* 表格題：判斷是否為 正確/錯誤/無從判斷 或 True/False/Not Given */
+      if (q.table && q.table.rows.length && isTFNG((q.table.rows[0] || []).map(function (c) { return c.text || ''; }))) {
+        q.tableType = 'tfng';
       }
 
       /* 教師版：紅字即答案 */
@@ -458,6 +559,43 @@
 
       qs.push(q);
       i = j;
+    }
+    return qs;
+  }
+
+  /* ---------- 英文卷題目收集（題目不帶題號，按「實質段落」切分） ---------- */
+  function isBlankLine(t) { return !t || /^[\s\u3000_－\-–—.\u2500]*$/.test(t); }
+  function collectEnglish(blocks, from, to, isTeacher) {
+    var qs = [], cur = null, n = 0;
+    function newQ() {
+      n++;
+      return { no: n, stem: '', skills: [], marks: 0, passageIndex: 0, section: null,
+        type: 'text', options: [], subQuestions: [], table: null, quotes: [],
+        answer: '', answerKeys: [], explanation: '', raw: [], _ans: '' };
+    }
+    for (var i = from; i < to; i++) {
+      var b = blocks[i];
+      if (b.kind === 'tr') {
+        if (!cur) continue;
+        cur.table = cur.table || { rows: [] };
+        cur.table.rows.push(b.cells.map(function (c) {
+          return { text: U.trim(c.text), visible: c.visible, red: c.red, tick: c.tick, sym: c.sym };
+        }));
+        if (cur.table.rows.length && isTFNG((cur.table.rows[0] || []).map(function (c) { return c.text || ''; }))) cur.tableType = 'tfng';
+        continue;
+      }
+      if (isEnglishOption(b)) {
+        if (!cur) { cur = newQ(); qs.push(cur); }
+        var m = U.trim(b.text).match(/^([A-H])[.、)]\s+(.*)$/);
+        if (m) cur.options.push({ key: m[1], text: U.trim(m[2]) });
+        continue;
+      }
+      var t = U.trim(b.text);
+      if (isBlankLine(t)) continue;
+      if (!cur) { cur = newQ(); qs.push(cur); }
+      else { cur = newQ(); qs.push(cur); }
+      cur.stem = (cur.stem ? cur.stem + '\n' : '') + t;
+      cur.marks = cur.marks || U.sumMarks(t);
     }
     return qs;
   }
@@ -499,6 +637,12 @@
         var keys = parseAnswerKeys((q.explanation || '') + ' ' + (q.answer || ''));
         /* 教師版把正確選項標紅也是很常見的做法 */
         if (!keys.length && t._redOptionKeys && t._redOptionKeys.length) keys = t._redOptionKeys.slice();
+        /* 英文卷：答案區的紅字可能是單一字母（A/B/C/D） */
+        if (!keys.length && t._redAnswers) {
+          var single = t._redAnswers.filter(function (x) { return /^[A-Ha-h]$/.test(U.trim(x)); })
+            .map(function (x) { return x.toUpperCase(); });
+          if (single.length) keys = single;
+        }
         keys = keys.filter(function (k, i, a) { return a.indexOf(k) === i; }).sort();
         q.answerKeys = keys;
         q.multi = keys.length > 1;
@@ -583,6 +727,25 @@
       var seq = (String(rowLabel).match(/^[\(（]\d+[\)）]/) || [])[0] || '';
       var cn = Math.max(sr.length, tr.length);
       var tickSeen = false;
+
+      /* 真／假／無從判斷：首列為題幹，正確欄位由教師版紅字標記 */
+      if (q.tableType === 'tfng' && r > 0) {
+        var ansIdx = -1;
+        for (var c0 = 0; c0 < cn; c0++) {
+          if (tr[c0] && tr[c0].red && c0 > 0) { ansIdx = c0; break; }
+          if (tr[c0] && tr[c0].tick && c0 > 0) { ansIdx = c0; break; }
+        }
+        subs.push({
+          id: 'q' + q.no + '_' + r,
+          label: seq || rowLabel || ('第 ' + r + ' 列'),
+          prompt: (sr[0] ? U.trim(sr[0].visible || sr[0].text) : '') || rowLabel,
+          choices: header,
+          answer: ansIdx >= 0 ? (header[ansIdx] || '') : '',
+          marks: 0,
+          kind: 'tfng'
+        });
+        continue;
+      }
 
       for (var c = 0; c < cn; c++) {
         var sc = sr[c], tc = tr[c];
@@ -692,16 +855,27 @@
       /* ---- 區段定位 ---- */
       var isShort = function (b) { return b.kind === 'p' && b.text.length <= 20; };
       var teacherIdx = findIndex(top, function (b) { return /教\s*師\s*版/.test(b.text); });
+      var isEnglish = top.some(function (b) {
+        return /Suggested Answers|Reading Text|END OF READING TEXT|END OF QUESTIONS/i.test(b.text);
+      });
+      var lang = isEnglish ? 'en' : 'zh';
+
       var matIdx = findIndex(top, function (b) {
         return isShort(b) && /閱\s*讀\s*能\s*力\s*考\s*材/.test(b.text);
       });
-      if (matIdx < 0) {
+      if (!isEnglish && matIdx < 0) {
         warnings.push('找不到「閱讀能力考材」標題，文章可能闕漏，請檢查。');
       }
 
       /* ---- 文章 ---- */
       var passages = [];
-      if (matIdx >= 0) {
+      if (isEnglish) {
+        var rStart = findIndex(top, function (b) { return /^\s*Reading Text\s*$/i.test(b.text); });
+        var rEnd = findIndex(top, function (b, k) { return k > rStart && /^END OF READING TEXT/i.test(b.text); });
+        if (rStart >= 0 && rEnd > rStart) {
+          passages = extractEnglishArticle(top, rStart, rEnd);
+        }
+      } else if (matIdx >= 0) {
         var doneIdx = findIndex(top, function (b, k) { return k > matIdx && isShort(b) && RE_DONE.test(b.text); });
         if (doneIdx < 0) {
           doneIdx = findIndex(top, function (b, k) { return k > matIdx && isShort(b) && /語\s*譯/.test(b.text); });
@@ -714,22 +888,72 @@
       }
 
       /* ---- 學生版題目 ---- */
-      var sFrom = findIndex(top, function (b) { return isShort(b) && RE_PASS.test(b.text); });
-      if (sFrom < 0) sFrom = 0;
-      var sEnd = findIndex(top, function (b, k) { return k >= sFrom && isShort(b) && RE_END.test(b.text); });
-      if (sEnd < 0) sEnd = (matIdx > 0 ? matIdx : (teacherIdx > 0 ? teacherIdx : top.length));
-      var studentQs = collectQuestions(top, sFrom, sEnd, false);
+      var sFrom, sEnd;
+      if (isEnglish) {
+        sFrom = findIndex(top, function (b) { return /^\s*Questions\s*$/i.test(b.text); });
+        if (sFrom < 0) sFrom = 0;
+        sEnd = findIndex(top, function (b, k) { return k >= sFrom && /^END OF QUESTIONS/i.test(b.text); });
+        if (sEnd < 0) sEnd = top.length;
+      } else {
+        /* 從最前面開始掃，才能吃到「甲部」標記與甲部題目（含 答題簿 格式） */
+        sFrom = 0;
+        sEnd = findIndex(top, function (b, k) { return k >= sFrom && isShort(b) && RE_END.test(b.text); });
+        if (sEnd < 0) sEnd = top.length;
+      }
+      var studentQs = isEnglish
+        ? collectEnglish(top, sFrom + 1, sEnd, false)
+        : collectQuestions(top, sFrom, sEnd, false);
 
       /* ---- 教師版題目 ---- */
       var teacherQs = [];
+      if (isEnglish) {
+        teacherIdx = findIndex(top, function (b) { return /Suggested Answers/i.test(b.text); });
+      }
       if (teacherIdx >= 0) {
-        var tFrom = findIndex(top, function (b, k) { return k >= teacherIdx && isShort(b) && RE_PASS.test(b.text); });
+        var tFrom = isEnglish
+          ? teacherIdx + 1
+          : findIndex(top, function (b, k) { return k >= teacherIdx && isShort(b) && RE_PASS.test(b.text); });
         if (tFrom < 0) tFrom = teacherIdx;
-        var tEnd = findIndex(top, function (b, k) { return k > tFrom && isShort(b) && RE_END.test(b.text); });
+        var tEnd = isEnglish
+          ? top.length
+          : findIndex(top, function (b, k) { return k > tFrom && isShort(b) && RE_END.test(b.text); });
         if (tEnd < 0) tEnd = top.length;
-        teacherQs = collectQuestions(top, tFrom, tEnd, true);
+        teacherQs = isEnglish
+          ? collectEnglish(top, tFrom, tEnd, true)
+          : collectQuestions(top, tFrom, tEnd, true);
       } else {
         warnings.push('找不到「教師版」區段：本卷可能只有學生版，答案需自行填寫或另外上傳教師卷。');
+      }
+
+      /* ---- 英文卷：把「建議答案」對應到學生題 ----
+         教師版區塊通常一題一塊（按題序排列），故以索引 1:1 對位；
+         若區塊以題號開頭（如 "21. B"），改用題號對位。
+         只有「乾淨的單一字母答案」才當成選擇題答案，避免把 Annotated Text
+         之類的內文誤判成答案。 */
+      if (isEnglish && teacherQs.length) {
+        var ansPool = {};
+        teacherQs.forEach(function (t, k) {
+          var a = U.trim(t.stem || '');
+          if (!a) return;
+          var numMatch = a.match(/^(?:Q\s*)?(\d{1,2})\s*[\.、)．：:]/i);
+          ansPool[numMatch ? parseInt(numMatch[1], 10) : (k + 1)] = a;
+        });
+        studentQs.forEach(function (q, idx) {
+          var a = ansPool[q.no] || ansPool[idx + 1];
+          if (!a) return;
+          q.answer = a;
+          /* 純字母，或 "21. B" / "(B)" / "Answer: B" 這種 */
+          var m = a.match(/\b([A-Ha-h])\b\s*$/) || a.match(/^\s*(?:Q\s*\d{1,2}\s*[\.、)．：:]\s*)?[（(]?([A-Ha-h])[）)]?\s*$/);
+          if (m && a.length <= 12) q.answerKeys = [m[1].toUpperCase()];
+        });
+        teacherQs = studentQs.map(function (q, idx) {
+          return {
+            no: idx + 1,
+            _redAnswers: (q.answerKeys && q.answerKeys.length) ? q.answerKeys : [],
+            _plainBody: q.answer ? [q.answer] : [],
+            answer: q.answer, stem: '', options: [], table: null
+          };
+        });
       }
 
       /* ---- 合併 ---- */
@@ -737,6 +961,7 @@
 
       /* ---- 篇章指派 ---- */
       questions.forEach(function (q) {
+        if (q.section === '甲' || !passages.length) { q.passageId = null; return; }
         var pi = Math.min(Math.max(q.passageIndex, 1), passages.length || 1) - 1;
         q.passageId = passages[pi] ? passages[pi].id : null;
       });
@@ -767,6 +992,7 @@
       return {
         title: title,
         level: level,
+        lang: lang,
         source: fileName || '',
         passages: passages,
         questions: questions,

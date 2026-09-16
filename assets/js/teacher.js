@@ -200,6 +200,25 @@
     adv.appendChild(U.el('span.tiny.faint', { text: '（教師版答案文字的顏色，預設紅色 FF0000）' }));
     card.appendChild(adv);
 
+    /* 年級分類 */
+    var gradeRow = U.el('div.row.mt2', {});
+    gradeRow.appendChild(U.el('label.tiny.muted', { text: '年級分類：' }));
+    var gSel = gradeSelect('', { style: { maxWidth: '150px', flex: '0 0 auto' } });
+    gSel.addEventListener('change', function () { opt.level = gSel.value; });
+    gradeRow.appendChild(gSel);
+    gradeRow.appendChild(U.el('span.tiny.faint', { text: '（上傳後仍可修改；學生首頁會依年級分組）' }));
+    card.appendChild(gradeRow);
+
+    /* 發佈選項 */
+    var pubChk = U.el('input', { type: 'checkbox' });
+    pubChk.checked = true;
+    card.appendChild(U.el('div.mt2', {}, [
+      U.el('label.check', { style: { display: 'flex' } }, [
+        pubChk,
+        U.el('span', { text: '解析後直接發佈，讓學生立刻看到（需先在「⑤ 資料與同步」設定 GitHub 或 Firebase）' })
+      ])
+    ]));
+
     /* 學生卷 */
     var dropS = dropZone('學生卷（題目卷）', function (f) {
       opt.studentFile = f;
@@ -220,6 +239,14 @@
       U.el('button.btn.primary', {
         text: '開始解析', onclick: function () {
           if (!opt.studentFile) { U.toast('請先選擇學生卷', 'bad'); return; }
+          opt.autoPublish = false;
+          runParse(view, opt);
+        }
+      }),
+      U.el('button.btn.mint', {
+        text: '解析並發佈', onclick: function () {
+          if (!opt.studentFile) { U.toast('請先選擇學生卷', 'bad'); return; }
+          opt.autoPublish = true;
           runParse(view, opt);
         }
       })
@@ -288,7 +315,7 @@
       var quiz = {
         id: U.slug(res.title) + '-' + Date.now().toString(36).slice(-4),
         title: res.title,
-        level: res.level || '',
+        level: opt.level || res.level || '',
         source: res.source || '',
         createdAt: U.nowISO(),
         updatedAt: U.nowISO(),
@@ -300,8 +327,18 @@
         stats: res.stats
       };
       return Store.quiz.save(quiz).then(function () {
-        U.toast('解析完成：' + res.questions.length + ' 題／' + res.passages.length + ' 篇文章（已存為草稿，請按「發佈到 GitHub」）', 'ok', 4500);
-        location.hash = '#/edit/' + quiz.id;
+        if (!opt.autoPublish) {
+          U.toast('解析完成：' + res.questions.length + ' 題／' + res.passages.length + ' 篇文章（已存為草稿，請按「發佈到 GitHub」）', 'ok', 4500);
+          location.hash = '#/edit/' + quiz.id;
+          return null;
+        }
+        return Backend.publishQuiz(quiz).then(function () {
+          U.toast('解析完成並已發佈！學生重新載入即可看到', 'ok', 4500);
+          location.hash = '#/edit/' + quiz.id;
+        }).catch(function (e) {
+          U.toast('已解析但發佈失敗：' + ((e && e.message) || '') + '（可到編輯頁手動發佈）', 'bad', 6000);
+          location.hash = '#/edit/' + quiz.id;
+        });
       });
     }).catch(function (e) {
       card.innerHTML = '';

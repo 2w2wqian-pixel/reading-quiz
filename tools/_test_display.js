@@ -65,22 +65,24 @@ const Forms=global.window.RQ.forms;
 function countNodes(n,tag){var c=(n.tagName===tag?1:0);(n.children||[]).forEach(function(ch){if(ch&&ch.tagName)c+=countNodes(ch,tag);});return c;}
 
 (async function(){
-  const files=['D:/打工人/中文補習/試卷/中六/DCL2E_MP_R141_6H_SB.docx','C:/Users/user/Downloads/2_Assessment_Task_reading_Obesity.docx'];
+  const files = process.argv.slice(2).length ? process.argv.slice(2)
+    : ['D:/打工人/中文補習/試卷/中六/DCL2E_MP_R141_6H_SB.docx', 'C:/Users/user/Downloads/2_Assessment_Task_reading_Obesity.docx'];
   for(const f of files){
     const buf=fs.readFileSync(f);const ab=buf.buffer.slice(buf.byteOffset,buf.byteOffset+buf.byteLength);
     const r=await Docx.parse(ab,{fileName:path.basename(f)});
     console.log('\n========',path.basename(f),'========');
     console.log('questions:',r.questions.length,'mcq:',r.questions.filter(q=>q.type==='mcq').length,'table:',r.questions.filter(q=>q.type==='table').length);
     r.questions.forEach(function(q){
-      if (q.no===2 || q.no===11){
+      if (q.no===1 || q.no===5 || q.no===9){
         console.log('\n--- DUMP Q'+q.no+' (type='+q.type+', tt='+(q.tableType||'')+') ---');
         console.log('stem:', q.stem);
         console.log('quotes('+q.quotes.length+'):', JSON.stringify(q.quotes).slice(0,300));
+        console.log('subQuestions('+(q.subQuestions||[]).length+'):');
+        (q.subQuestions||[]).slice(0,10).forEach(function(s){console.log('   ', s.kind, '| label=', JSON.stringify((s.label||'').slice(0,50)), '| prompt=', JSON.stringify((s.prompt||'').slice(0,50)), '| ans=', JSON.stringify((s.answer||'').slice(0,20)), '| choices=', (s.choices||[]).length);});
         console.log('table rows:', (q.table&&q.table.rows||[]).length);
-        (q.table&&q.table.rows||[]).forEach(function(row,ri){
-          console.log('  row'+ri+':', row.map(function(c){return '['+ (c.visible||c.text||'').slice(0,14) + (c.sym?'*sym':'') +']';}).join(' '));
+        (q.table&&q.table.rows||[]).slice(0,6).forEach(function(row,ri){
+          console.log('  row'+ri+':', row.map(function(c){return JSON.stringify((c.visible||c.text||'').slice(0,22));}).join(' '));
         });
-        console.log('options:', JSON.stringify(q.options));
       }
       try{
         var wrap=Forms.input(q,{},{onChange:function(){}});

@@ -80,6 +80,14 @@
     if (t.length >= 10 && /[「『“(（《]/.test(t)) return true;
     return false;
   }
+  /* 給學生看的參考文字：要解釋的句子／字詞、選項說明、引文…
+     （只要不是表格／選項／解析，就不要默默丟掉，一律當成參考文字顯示） */
+  function isRefText(t) {
+    if (!t) return false;
+    if (/^[＿_\s\u3000.．·・…\-–—－※│|]+$/.test(t)) return false;   // 只有底線／標點／空白
+    if (/^\d{1,3}$/.test(t)) return false;                           // 純頁碼
+    return U.trim(t).length >= 2;
+  }
   /* 英文選項段落：A. / B) / C、 … */
   function isEnglishOption(b) {
     if (b.kind !== 'p') return false;
@@ -203,7 +211,14 @@
       if (t.type === 'text') s += t.v;
       else if (t.type === 'sym' && t.letter) s += '(' + t.letter + ')';
     });
-    return s.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n');
+    /* 保留「2 個以上空白」——那是原卷「填空位置」的線索（例如「第　　　段」），
+       收斂成剛好 2 個空白當作標記，其餘空白正規化，避免填空格被吃掉 */
+    return s
+      .replace(/\t/g, ' ')
+      .replace(/ {2,}/g, '  ')
+      .replace(/[ ]+\n/g, '\n')
+      .replace(/\n[ ]+/g, '\n')
+      .replace(/\n{3,}/g, '\n\n');
   }
   /** 只看得見的文字（不含符號） */
   function tokensVisible(tokens) {
@@ -519,6 +534,9 @@
           }
           if (inAnalysis) {
             q.explanation += (q.explanation ? '\n' : '') + txt;
+          } else if (isRefText(txt)) {
+            /* 要解釋的句子／字詞、選項說明等 → 當成參考文字顯示給學生 */
+            q.quotes.push(txt);
           } else {
             q.raw.push(txt);
           }
@@ -708,8 +726,12 @@
   }
 
   function subLabel(rowLabel, seq) {
-    var a = [rowLabel, seq].filter(function (x) { return U.trim(x || ''); });
-    return a.join(' / ').replace(/\s+/g, ' ');
+    rowLabel = U.trim(rowLabel || '');
+    seq = U.trim(seq || '');
+    if (!rowLabel) return seq;
+    /* rowLabel 本身常已含「(1)」等序號，別再重複附加 */
+    if (!seq || rowLabel.indexOf(seq) === 0) return rowLabel.replace(/\s+/g, ' ');
+    return (rowLabel + ' / ' + seq).replace(/\s+/g, ' ');
   }
 
   function buildSubQuestions(q, t) {
@@ -759,8 +781,10 @@
           tickSeen = true;
           subs.push({
             id: 'q' + q.no + '_' + r + '_' + c,
-            label: subLabel(rowLabel, seq) || ('第 ' + (r + 1) + ' 列'),
-            prompt: sVis || rowLabel,
+            label: seq || ('第 ' + (r + 1) + ' 列'),
+            prompt: rowLabel,
+            /* 讓學生能從欄位標題中挑一個（例：肖像描寫／語言描寫／行動描寫／心理描寫） */
+            choices: header.slice(1).filter(function (x) { return U.trim(x); }),
             answer: header[c] || tVis || '✔',
             marks: U.sumMarks(tTxt),
             kind: 'tick'

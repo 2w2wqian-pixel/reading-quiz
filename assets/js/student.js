@@ -155,6 +155,58 @@
     return sel;
   }
 
+  /* ---------- 「格內填空」：把文字中的空白／底線換成可輸入的小框 ---------- */
+  var BLANK_RE = /( {2,}|\u3000+|[_＿]{2,})/;
+  function _isBlankSeg(s) { return /^( {2,}|\u3000+|[_＿]{2,})$/.test(s); }
+  function _hasBlank(t) { return BLANK_RE.test(String(t || '')); }
+  function _isAllBlankText(t) { return !t || /^[ _\u3000＿]+$/.test(String(t)); }
+
+  function _cellFrag(text, keyBase, sub, opts, firstKey) {
+    var box = U.el('span.cellfill');
+    var parts = String(text || '').split(BLANK_RE);
+    var bi = 0;
+    parts.forEach(function (p) {
+      if (!p) return;
+      if (_isBlankSeg(p)) {
+        var key = (bi === 0 && firstKey) ? firstKey : (keyBase + '_b' + bi);
+        bi++;
+        var inp = U.el('input.input', { type: 'text', style: { width: '86px', display: 'inline-block', padding: '2px 6px', margin: '0 2px' } });
+        inp.value = sub[key] || '';
+        if (opts.disabled) inp.disabled = true;
+        else inp.addEventListener('input', U.debounce(function () { sub[key] = inp.value; opts.onChange && opts.onChange({ sub: sub }); }, 300));
+        box.appendChild(inp);
+      } else {
+        box.appendChild(U.el('span', { text: p }));
+      }
+    });
+    return { node: box, blanks: bi };
+  }
+
+  /** 子題要顯示的文字：避免 label 與 prompt 重複（例如「(1)… / (1)　(1)…」） */
+  function _pickSubText(s) {
+    var lab = U.trim(s.label || ''), pr = U.trim(s.prompt || '');
+    if (!pr) return lab;
+    if (!lab || lab === pr) return pr;
+    if (lab.indexOf(pr) >= 0) return pr;   // label 只是 prompt 加上位置標記 → 用 prompt
+    if (pr.indexOf(lab) >= 0) return pr;
+    var short = lab.split(' / ').pop();
+    if (short && pr.indexOf(short) >= 0) return pr;
+    if (short && short !== lab) return short + '　' + pr;
+    return lab + '　' + pr;
+  }
+
+  function _radioCell(gname, opt, sub, opts) {
+    var td = U.el('td');
+    var lab = U.el('label.optcell');
+    var r = U.el('input', { type: 'radio', name: gname, value: opt });
+    r.checked = (sub[gname] === opt);
+    if (opts.disabled) r.disabled = true;
+    else r.addEventListener('change', function () { sub[gname] = opt; opts.onChange && opts.onChange({ sub: sub }); });
+    lab.appendChild(r);
+    td.appendChild(lab);
+    return td;
+  }
+
   Forms.tableInput = function (q, ans, opts) {
     opts = opts || {};
     var sub = ans.sub || {};
@@ -198,21 +250,32 @@
       var t3 = U.el('table.qtable');
       q.subQuestions.forEach(function (s) {
         var tr = U.el('tr');
-        tr.appendChild(U.el('td.qt-label', { html: U.esc(s.label || '') + (s.prompt ? '　' + U.nl2br(s.prompt) : '') }));
-        var td = U.el('td.qt-ans');
-        if (s.kind === 'tick' && (s.choices || []).length) {
-          td.appendChild(_mkSelect(s.id, sub[s.id], s.choices.filter(Boolean), sub, opts));
+        var labTd = U.el('td.qt-label');
+        var disp = _pickSubText(s);
+        if (_hasBlank(disp) && !_isAllBlankText(disp)) {
+          /* 題目文字本身含填空位置（如「(1) 第　段」）→ 直接在文字中插入輸入框 */
+          var cf = _cellFrag(disp, s.id + '_p', sub, opts, s.id);
+          labTd.appendChild(cf.node);
+          labTd.setAttribute('colspan', '2');
+          tr.appendChild(labTd);
         } else {
-          var ta = U.el('textarea.input', { rows: 2 });
-          ta.value = sub[s.id] || '';
-          if (opts.disabled) ta.disabled = true;
-          else ta.addEventListener('input', U.debounce(function () {
-            sub[s.id] = ta.value;
-            opts.onChange && opts.onChange({ sub: sub });
-          }, 300));
-          td.appendChild(ta);
+          labTd.innerHTML = U.nl2br(U.esc(disp));
+          tr.appendChild(labTd);
+          var td = U.el('td.qt-ans');
+          if (s.kind === 'tick' && (s.choices || []).length) {
+            td.appendChild(_mkSelect(s.id, sub[s.id], s.choices.filter(Boolean), sub, opts));
+          } else {
+            var ta = U.el('textarea.input', { rows: 2 });
+            ta.value = sub[s.id] || '';
+            if (opts.disabled) ta.disabled = true;
+            else ta.addEventListener('input', U.debounce(function () {
+              sub[s.id] = ta.value;
+              opts.onChange && opts.onChange({ sub: sub });
+            }, 300));
+            td.appendChild(ta);
+          }
+          tr.appendChild(td);
         }
-        tr.appendChild(td);
         t3.appendChild(tr);
       });
       wrap.appendChild(t3);
@@ -224,8 +287,14 @@
     var hid = _isHeader(rws[0]) ? 0 : -1;
     if (hid >= 0) {
       var oc = rws[hid].slice(1);
+      /* 選擇格：選項欄有 ○／● 記號，或整欄是空白（學生版尚未畫圈） */
       var grid = rws.slice(hid + 1).some(function (r) {
-        return r.slice(1).some(function (c) { return c.sym > 0 || /^○+$/.test(_ct(c)); });
+        var cells = r.slice(1);
+        if (!cells.length) return false;
+        return cells.every(function (c) {
+          var t = _ct(c);
+          return t === '' || c.sym > 0 || /^[○●]+$/.test(t);
+        });
       });
       if (grid) {
         var opts2 = oc.map(_ct).filter(Boolean);
@@ -236,23 +305,22 @@
         tg.appendChild(htr);
         rws.slice(hid + 1).forEach(function (row, bi) {
           var label = _ct(row[0]);
-          var items = label.match(/\([0-9]+\)/g);
-          if (!items) items = [label];
+          if (!label) return;
+          var items = label.match(/\([0-9]+\)/g) || [];
+          if (items.length < 2) {
+            /* 單列：label 本身就是題幹句子 → 一組選項 */
+            var tr0 = U.el('tr');
+            tr0.appendChild(U.el('td', { html: U.nl2br(U.esc(label)) }));
+            var g0 = q.id + '_g' + bi;
+            opts2.forEach(function (opt) { tr0.appendChild(_radioCell(g0, opt, sub, opts)); });
+            tg.appendChild(tr0);
+            return;
+          }
           items.forEach(function (it, si) {
             var tr = U.el('tr');
-            tr.appendChild(U.el('td', { text: it || label }));
+            tr.appendChild(U.el('td', { text: it }));
             var gname = q.id + '_g' + bi + '_' + si;
-            opts2.forEach(function (opt) {
-              var td = U.el('td');
-              var lab = U.el('label.optcell');
-              var r = U.el('input', { type: 'radio', name: gname, value: opt });
-              r.checked = (sub[gname] === opt);
-              if (opts.disabled) r.disabled = true;
-              else r.addEventListener('change', function () { sub[gname] = opt; opts.onChange && opts.onChange({ sub: sub }); });
-              lab.appendChild(r);
-              td.appendChild(lab);
-              tr.appendChild(td);
-            });
+            opts2.forEach(function (opt) { tr.appendChild(_radioCell(gname, opt, sub, opts)); });
             tg.appendChild(tr);
           });
         });
@@ -273,8 +341,15 @@
       var tr = U.el('tr');
       row.forEach(function (cell, ci) {
         var td = U.el('td');
-        if (_isFill(cell)) td.appendChild(_mkInput(q.id + '_r' + ri + 'c' + ci, sub[q.id + '_r' + ri + 'c' + ci], sub, opts));
-        else td.innerHTML = _ct(cell) ? U.esc(_ct(cell)) : '&nbsp;';
+        var t = _ct(cell);
+        if (_hasBlank(t) && !_isAllBlankText(t)) {
+          /* 文字中夾著填空位置（如「第　段」）→ 就地插入輸入框 */
+          td.appendChild(_cellFrag(t, q.id + '_r' + ri + 'c' + ci, sub, opts).node);
+        } else if (_isFill(cell)) {
+          td.appendChild(_mkInput(q.id + '_r' + ri + 'c' + ci, sub[q.id + '_r' + ri + 'c' + ci], sub, opts));
+        } else {
+          td.innerHTML = t ? U.esc(t) : '&nbsp;';
+        }
         tr.appendChild(td);
       });
       tf.appendChild(tr);

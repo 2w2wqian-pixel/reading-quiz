@@ -30,6 +30,12 @@
       return wrap;
     }
 
+    /* 配對題：左邊題項、右邊選項籤，可拖拽或點選作答 */
+    if (q.type === 'matching' && q.matching) {
+      wrap.appendChild(Forms.matchingInput(q, ans, opts));
+      return wrap;
+    }
+
     if (q.type === 'mcq') {
       var box = U.el('div.opts');
       var val = Array.isArray(ans.value) ? ans.value.slice() : (ans.value ? [ans.value] : []);
@@ -72,7 +78,9 @@
       wrap.appendChild(box);
 
     } else if (q.type === 'table') {
-      var tw = Forms.tableInput(q, ans, opts);
+      var tw = (q.fillin && (q.fillin.blanks || []).length)
+        ? Forms.fillinInput(q, ans, opts)
+        : Forms.tableInput(q, ans, opts);
       /* 保險：若整題還原不出任何可作答元件（例如只有選項標記的單列表格），
          補一個通用作答框，確保每題都答得到 */
       if (typeof tw.querySelector === 'function' && !tw.querySelector('input,select,textarea')) {
@@ -108,6 +116,14 @@
         return k + (o ? '. ' + o.text : '');
       }).join('、') || '（未作答）';
     }
+    if (q.type === 'matching' && q.matching) {
+      var msub = ans.sub || {};
+      return (q.matching.items || []).map(function (it) {
+        var k = U.trim(msub[it.id] || '');
+        var o = (q.matching.options || []).filter(function (x) { return x.key === k; })[0];
+        return (it.label ? it.label + '：' : '') + (k ? k + (o ? '. ' + o.text : '') : '（未作答）');
+      }).join('\n');
+    }
     if (q.type === 'table') {
       var sub = ans.sub || {};
       if ((q.subQuestions || []).length) {
@@ -116,8 +132,17 @@
         }).join('\n');
       }
       var filled = Object.keys(sub).filter(function (k) { return U.trim(sub[k]); })
-        .map(function (k) { return U.trim(sub[k]); });
-      return filled.length ? filled.join('　/　') : '（未作答）';
+        .map(function (k) {
+          /* 對回原表格的列標籤，老師才知道答案對應哪一格／哪一列 */
+          var m = /^q\d+_r(\d+)c\d+$/.exec(k);
+          if (m && q.table && q.table.rows) {
+            var row = q.table.rows[+m[1]] || [];
+            var label = row.map(function (c) { return _ct(c); }).filter(Boolean).join(' ');
+            if (label) return label + '：' + U.trim(sub[k]);
+          }
+          return U.trim(sub[k]);
+        });
+      return filled.length ? filled.join('\n') : '（未作答）';
     }
     return ans.value || '（未作答）';
   };
@@ -148,9 +173,14 @@
       return t.length > 0 && t.length <= 10 && !_isFill(c);
     });
   }
-  function _mkInput(key, val, sub, opts) {
+  function _mkInput(key, val, sub, opts, maxLen) {
     var inp = U.el('input.input.cell', { type: 'text' });
     inp.value = val || '';
+    if (maxLen) {
+      inp.setAttribute('maxlength', String(maxLen));
+      inp.classList.add('boxinput');
+      inp.style.width = Math.min(16, Math.max(4, maxLen * 2.2)) + 'em';
+    }
     if (opts.disabled) inp.disabled = true;
     else inp.addEventListener('input', U.debounce(function () {
       sub[key] = inp.value;
@@ -250,12 +280,12 @@
   }
 
   /* 把一個儲存格畫進 td/th：填空→就地插入輸入框（保留「(A)」這類前後文字） */
-  function _fillCell(td, cell, key, sub, opts) {
+  function _fillCell(td, cell, key, sub, opts, boxLen) {
     var t = _ct(cell);
     if (t && _hasBlank(t) && !_isAllBlankText(t)) {
       td.appendChild(_cellFrag(t, key, sub, opts, key).node);
     } else if (t === '' || _isFill(cell)) {
-      td.appendChild(_mkInput(key, sub[key], sub, opts));
+      td.appendChild(_mkInput(key, sub[key], sub, opts, boxLen));
     } else if (cell && cell.html) {
       td.innerHTML = _cellInner(cell);
     } else {
@@ -327,6 +357,16 @@
     var wrap = U.el('div.qtable-wrap');
     var rows = (q.table && q.table.rows) || [];
     var subs = (q.subQuestions || []).slice();
+
+    /* 字數限制格子：表頭寫「答案須是四個字」→ 輸入框限長＋窄版 */
+    var boxLen = 0;
+    var CND = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10 };
+    rows.slice(0, 2).forEach(function (row) {
+      (row || []).forEach(function (c) {
+        var m = _ct(c).match(/答案[須须]要?\s*是?\s*([一二三四五六七八九十\d]+)\s*個字/);
+        if (m) boxLen = CND[m[1]] || parseInt(m[1], 10) || 0;
+      });
+    });
 
     /* 子題 → 原表格儲存格：子題 id 形如 q<題號>_<列>_<欄>（解析時產生），
        用它把輸入框放回原本那一格，表格版面才不會被壓成兩欄、內容才不會掉。 */
@@ -465,7 +505,7 @@
         var isRowHead = ci === 0 && row.length > 1 && !s && !_isFill(cell) && _ct(cell).length <= 40;
         var td = U.el(isRowHead ? 'th' : 'td');
         if (cell && (cell.span || 1) > 1) td.setAttribute('colspan', String(cell.span));
-        _fillCell(td, cell, s ? s.id : (q.id + '_r' + ri + 'c' + ci), sub, opts);
+        _fillCell(td, cell, s ? s.id : (q.id + '_r' + ri + 'c' + ci), sub, opts, boxLen);
         tr.appendChild(td);
       });
       padRow(tr, rUsed);
@@ -476,6 +516,112 @@
     /* 沒能對回原表格的子題 → 補在表格下方，確保一個都不漏 */
     var orphans = subs.filter(function (s) { return !used[s.id]; });
     if (orphans.length) wrap.appendChild(_subList(q, orphans, sub, opts, U.el('div')));
+    return wrap;
+  };
+
+  /* ---------- 配對題：拖拽／點選作答 ---------- */
+  Forms.matchingInput = function (q, ans, opts) {
+    opts = opts || {};
+    ans = ans || {};
+    var sub = ans.sub || (ans.sub = {});
+    var M = q.matching;
+    var wrap = U.el('div.match');
+    var sel = { key: '' };
+
+    var itemsBox = U.el('div.match-items');
+    var optsBox = U.el('div.match-opts',
+      M.options && M.options.length ? [U.el('div.match-optstitle.tiny.muted', { text: '選項（點選或拖到左邊格子）' })] : []);
+
+    function paintSel() {
+      Object.keys(chips).forEach(function (k) {
+        chips[k].classList[sel.key === k ? 'add' : 'remove']('sel');
+      });
+    }
+    var chips = {};
+    (M.options || []).forEach(function (o) {
+      var chip = U.el('span.match-chip', { text: o.key + '. ' + o.text, draggable: opts.disabled ? null : 'true' });
+      chip.addEventListener('click', function () {
+        if (opts.disabled) return;
+        sel.key = (sel.key === o.key) ? '' : o.key;
+        paintSel();
+      });
+      chip.addEventListener('dragstart', function (e) {
+        if (opts.disabled) { e.preventDefault(); return; }
+        sel.key = o.key;
+        paintSel();
+        try { e.dataTransfer.setData('text/plain', o.key); } catch (err) { }
+      });
+      chips[o.key] = chip;
+      optsBox.appendChild(chip);
+    });
+
+    (M.items || []).forEach(function (it) {
+      var row = U.el('div.match-item');
+      row.appendChild(U.el('div.match-label', { html: U.nl2br(U.esc(it.label || '')) }));
+      var slot = U.el('span.match-slot' + (sub[it.id] ? '.filled' : ''), { text: sub[it.id] || '＿' });
+      function assign(k) {
+        if (k) sub[it.id] = k; else delete sub[it.id];
+        slot.textContent = k || '＿';
+        slot.classList[k ? 'add' : 'remove']('filled');
+        opts.onChange && opts.onChange({ sub: sub });
+        paintSel();
+      }
+      slot.addEventListener('click', function () {
+        if (opts.disabled) return;
+        if (sub[it.id]) { assign(''); return; }     /* 已填 → 點一下清除 */
+        if (sel.key) assign(sel.key);
+      });
+      slot.addEventListener('dragover', function (e) {
+        if (opts.disabled) return;
+        e.preventDefault(); slot.classList.add('over');
+      });
+      slot.addEventListener('dragleave', function () { slot.classList.remove('over'); });
+      slot.addEventListener('drop', function (e) {
+        e.preventDefault(); slot.classList.remove('over');
+        if (opts.disabled) return;
+        var k = '';
+        try { k = e.dataTransfer.getData('text/plain'); } catch (err) { }
+        if (k) assign(k);
+      });
+      row.appendChild(slot);
+      itemsBox.appendChild(row);
+    });
+
+    wrap.appendChild(U.el('div.match-grid', {}, [itemsBox, optsBox]));
+    return wrap;
+  };
+
+  /* ---------- 摘要／筆記填充：原文中就地把空白換成輸入框 ---------- */
+  Forms.fillinInput = function (q, ans, opts) {
+    opts = opts || {};
+    ans = ans || {};
+    var sub = ans.sub || (ans.sub = {});
+    var F = q.fillin || { text: '', blanks: [] };
+    var box = U.el('div.fillin');
+    var blanks = F.blanks || [];
+    /* 依原文切開：(a) ______ 的位置插入輸入框，其餘照原文顯示 */
+    var parts = String(F.text || '').split(/(\([a-z0-9]{1,3}\)[\s\u3000]*(?:_{2,}|＿{2,}|\.{3,}|—{2,}))/g);
+    var bi = 0;
+    parts.forEach(function (seg) {
+      if (!seg) return;
+      var m = /^\(([a-z0-9]{1,3})\)/.exec(seg);
+      var b = (m && bi < blanks.length) ? blanks[bi++] : null;
+      if (b) {
+        box.appendChild(U.el('span.blk-lbl', { text: '(' + b.key + ')' }));
+        var inp = U.el('input.input.boxinput', { type: 'text', placeholder: '答案' });
+        inp.value = sub[b.id] || '';
+        if (opts.disabled) inp.disabled = true;
+        else inp.addEventListener('input', U.debounce(function () {
+          sub[b.id] = inp.value;
+          opts.onChange && opts.onChange({ sub: sub });
+        }, 300));
+        box.appendChild(inp);
+      } else {
+        box.appendChild(U.el('span', { text: seg }));
+      }
+    });
+    var wrap = U.el('div.q-input');
+    wrap.appendChild(box);
     return wrap;
   };
 
@@ -493,12 +639,41 @@
 
   /** 自動批改：只有選擇題能自動 */
   Forms.autoScore = function (q, ans) {
-    if (q.type !== 'mcq' || !q.answerKeys || !q.answerKeys.length) return null;
-    var v = (ans && Array.isArray(ans.value)) ? ans.value.slice().sort() : [];
-    var k = q.answerKeys.slice().sort();
-    if (v.length !== k.length) return 0;
-    for (var i = 0; i < k.length; i++) if (v[i] !== k[i]) return 0;
-    return q.marks || 0;
+    if (q.type === 'mcq') {
+      if (!q.answerKeys || !q.answerKeys.length) return null;
+      var v0 = (ans && Array.isArray(ans.value)) ? ans.value.slice().sort() : [];
+      var k0 = q.answerKeys.slice().sort();
+      if (v0.length !== k0.length) return 0;
+      for (var i0 = 0; i0 < k0.length; i0++) if (v0[i0] !== k0[i0]) return 0;
+      return q.marks || 0;
+    }
+    /* 摘要填空：逐格比對（忽略大小寫與多餘空白） */
+    if (q.fillin && (q.fillin.blanks || []).length) {
+      var bs = q.fillin.blanks.filter(function (b) { return U.trim(b.answer || ''); });
+      if (!bs.length) return null;
+      var ssub = (ans && ans.sub) || {};
+      var okN = bs.filter(function (b) {
+        return U.trim(ssub[b.id] || '').toLowerCase().replace(/[\s\u3000]/g, '') ===
+          String(b.answer).toLowerCase().replace(/[\s\u3000]/g, '');
+      }).length;
+      return Math.round((q.marks || 0) * okN / bs.length * 10) / 10;
+    }
+    /* 配對題／判斷題：客觀題，逐格比對（老師仍可手動調分） */
+    if ((q.type === 'matching' && q.matching) || (q.tableType === 'tfng' && (q.subQuestions || []).length)) {
+      var pairs = q.type === 'matching'
+        ? (q.matching.items || []).map(function (it) { return { id: it.id, a: q.matching.answers[it.id] }; })
+        : (q.subQuestions || []).map(function (x) { return { id: x.id, a: x.answer }; });
+      if (!pairs.length) return null;
+      var answerable = pairs.filter(function (p) { return U.trim(p.a || ''); });
+      if (!answerable.length) return null;                  // 沒有參考答案 → 留給老師批改
+      var sub = (ans && ans.sub) || {};
+      var correct = answerable.filter(function (p) {
+        return U.trim(sub[p.id] || '').toUpperCase() === String(p.a).trim().toUpperCase();
+      }).length;
+      var got = (q.marks || 0) * correct / answerable.length;
+      return Math.round(got * 10) / 10;
+    }
+    return null;
   };
 
   /** 顯示正確答案 */
@@ -508,6 +683,27 @@
     box.appendChild(U.el('div.k', {
       text: got === null ? '參考答案' : (got > 0 ? '✔ 答對（' + got + ' / ' + (q.marks || 0) + ' 分）' : '✘ 答錯')
     }));
+    if (q.type === 'matching' && q.matching) {
+      var M = q.matching;
+      var mt = U.el('table.tbl');
+      mt.innerHTML = '<thead><tr><th>題項</th><th>你的答案</th><th>正確答案</th></tr></thead>';
+      var mtb = U.el('tbody');
+      (M.items || []).forEach(function (it) {
+        var my = U.trim((ans.sub || {})[it.id] || '');
+        var correct = M.answers[it.id] || '';
+        var oc = (M.options || []).filter(function (x) { return x.key === correct; })[0];
+        var tr = U.el('tr');
+        tr.appendChild(U.el('td', { html: U.esc(it.label) }));
+        tr.appendChild(U.el('td', { html: my ? U.esc(my) : '—' }));
+        tr.appendChild(U.el('td', {
+          html: correct ? '<b>' + U.esc(correct) + '</b>' + (oc ? '. ' + U.esc(oc.text) : '') : '—'
+        }));
+        mtb.appendChild(tr);
+      });
+      mt.appendChild(mtb);
+      box.appendChild(mt);
+      return box;
+    }
     if (q.type === 'mcq') {
       box.appendChild(U.el('div', {
         html: '正確選項：<b>' + U.esc((q.answerKeys || []).join('、') || '—') + '</b>' +

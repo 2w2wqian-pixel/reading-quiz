@@ -89,7 +89,7 @@
     return U.trim(t).length >= 2;
   }
   /* 同一行內的多個選項標記（PDF 常見）："A. x　B. y" */
-  var RE_OPT_MARK = /(?:^|[\s\u3000])([A-H])\s*[.、)．:：]\s+/g;
+  var RE_OPT_MARK = /([A-H])\s*[.、)．:：]\s+/g;   /* 左邊界不要求空白：PDF／docx 常出現「…mistakesC. …」 */
 
   /**
    * 把「同一行排了多個選項」的行切成多段（PDF 常見：「A. 只有　B. 沒有　C. 都有」）。
@@ -402,15 +402,18 @@
       if (c.nodeType === 1 && localName(c) === 'tc') tcs.push(c);
     }
     tcs.forEach(function (tc) {
-      var ps = [];
+      var ps = [], hasNested = false;
       for (var j = 0; j < tc.childNodes.length; j++) {
         var cc = tc.childNodes[j];
-        if (cc.nodeType === 1 && localName(cc) === 'p') ps.push(cc);
+        if (cc.nodeType !== 1) continue;
+        if (localName(cc) === 'p') ps.push(cc);
+        else if (localName(cc) === 'tbl') hasNested = true;   /* 嵌套表格：expandTable 已自成一列 */
       }
       var toks = [];
       collectTokens._color = color;
       if (ps.length) ps.forEach(function (p) { collectTokens(p, toks, false); });
-      else collectTokens(tc, toks, false);
+      else if (!hasNested) collectTokens(tc, toks, false);
+      /* 註：儲存格若含嵌套表格，文字由展開後的列負責，這裡不重複收集 */
       var txt = U.trim(tokensText(toks));
       var vis = tokensVisible(toks);
       var symN = tokensSymCount(toks);
@@ -452,6 +455,26 @@
   /* ============================================================
      主解析流程
      ============================================================ */
+  /** 把一個（可能含嵌套表格的）表格展開成 row 區塊。
+      嵌套表格＝儲存格裡再放一個表格；配對題／選擇題答題格常這樣排，
+      不展開的話整個表格只會剩一格、內容與答案全部擠在一起（實測踩雷）。 */
+  function expandTable(tblEl, color, out) {
+    for (var j = 0; j < tblEl.childNodes.length; j++) {
+      var r = tblEl.childNodes[j];
+      if (r.nodeType !== 1 || localName(r) !== 'tr') continue;
+      out.push(rowBlock(r, color));
+      /* 這一列的儲存格裡若有嵌套表格 → 遞迴展開，排在這一列後面 */
+      for (var k = 0; k < r.childNodes.length; k++) {
+        var tc = r.childNodes[k];
+        if (tc.nodeType !== 1 || localName(tc) !== 'tc') continue;
+        for (var m = 0; m < tc.childNodes.length; m++) {
+          var nt = tc.childNodes[m];
+          if (nt.nodeType === 1 && localName(nt) === 'tbl') expandTable(nt, color, out);
+        }
+      }
+    }
+  }
+
   function buildBlocks(bodyEl, color) {
     var top = [], paras = [];
     for (var i = 0; i < bodyEl.childNodes.length; i++) {
@@ -460,10 +483,7 @@
       var ln = localName(c);
       if (ln === 'p') top.push(paraBlock(c, color));
       else if (ln === 'tbl') {
-        for (var j = 0; j < c.childNodes.length; j++) {
-          var r = c.childNodes[j];
-          if (r.nodeType === 1 && localName(r) === 'tr') top.push(rowBlock(r, color));
-        }
+        expandTable(c, color, top);
       } else if (ln === 'sdt' || ln === 'sdtContent') {
         /* 內容控制項：展開 */
         var inner = c.getElementsByTagName('w:p');
@@ -730,6 +750,273 @@
     return qs;
   }
 
+  /* ============================================================
+     表格結構偵測：配對題／表格內選擇題／英文 True-False-Not Given
+     ============================================================ */
+  var RE_LETTER_CELL = /^[A-H][.、)]?$/;
+
+  function cellText(c) { return U.trim((c && (c.visible || c.text)) || ''); }
+  function cellRaw(c) { return U.trim((c && c.text) || ''); }
+
+  /** 配對題：題項＋作答格＋「字母＋選項文字」成列（中英文通用）。
+      例：(i) Penny Ma [  ] … A. hardworking */
+  function detectMatching(q, t) {
+    var rows = (q.table && q.table.rows) || [];
+    var tRows = (t && t.table && t.table.rows) || [];
+    if (rows.length < 3) return false;
+    var options = [], seen = {}, items = [];
+    rows.forEach(function (row, ri) {
+      var cells = row || [];
+      var firstEmpty = -1, letterAt = -1, optText = '';
+      for (var c = 0; c < cells.length; c++) {
+        var v = cellText(cells[c]);
+        if (firstEmpty < 0 && v === '') firstEmpty = c;
+        if (RE_LETTER_CELL.test(v)) {
+          var nv = cellText(cells[c + 1]);
+          if (nv && nv.length >= 2 && !RE_LETTER_CELL.test(nv) && letterAt < 0) { letterAt = c; optText = nv; }
+        }
+      }
+      if (letterAt >= 0 && optText) {
+        var key = cellText(cells[letterAt]).replace(/[.、)]$/, '');
+        if (!seen[key]) { seen[key] = 1; options.push({ key: key, text: optText }); }
+      }
+      if (firstEmpty > 0 && (letterAt < 0 || firstEmpty < letterAt)) {
+        var label = [];
+        for (var c2 = 0; c2 < firstEmpty; c2++) {
+          var lv = cellText(cells[c2]);
+          if (lv && !RE_LETTER_CELL.test(lv)) label.push(lv);
+        }
+        if (label.join('').length >= 2) {
+          items.push({ id: 'q' + q.no + '_m' + items.length, label: label.join(' '), row: ri, col: firstEmpty });
+        }
+      }
+    });
+    if (items.length < 2 || options.length < 3) return false;
+    var answers = {};
+    items.forEach(function (it) {
+      var tv = cellRaw((tRows[it.row] || [])[it.col]);
+      if (tv) answers[it.id] = tv.replace(/[.、)]$/, '');
+    });
+    q.matching = { items: items, options: options, answers: answers };
+    q.subQuestions = [];
+    q.table = null;
+    q.answer = items.map(function (it) {
+      var a = answers[it.id] || '';
+      var o = options.filter(function (x) { return x.key === a; })[0];
+      return (it.label ? it.label + '：' : '') + a + (o ? '. ' + o.text : '');
+    }).join('\n');
+    return true;
+  }
+
+  /** 表格內選擇題：選項全部擠在同一格（A. … B. … C. … D. …）→ 轉成正式 MCQ */
+  function detectCellMcq(q) {
+    var rows = (q.table && q.table.rows) || [];
+    for (var ri = 0; ri < rows.length; ri++) {
+      var cells = rows[ri] || [];
+      for (var c = 0; c < cells.length; c++) {
+        var txt = cellText(cells[c]);
+        if ((txt.match(/[A-H][.、)．]/g) || []).length < 3) continue;
+        var opts = [];
+        splitOptionLine(txt).forEach(function (seg) {
+          var m = seg.match(/^\s*([A-H])[.、)．]\s*(.+)$/);
+          if (m) opts.push({ key: m[1], text: U.trim(m[2]) });
+        });
+        if (opts.length >= 3) {
+          q.options = opts;
+          q.table = null;
+          q.subQuestions = [];
+          q.mcqFromTable = true;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function mapTfngAns(v) {
+    var s = U.trim(String(v || '')).toUpperCase();
+    if (/^T(RUE)?$/.test(s)) return 'True';
+    if (/^F(ALSE)?$/.test(s)) return 'False';
+    if (/^(NG|N|NOT GIVEN)$/.test(s)) return 'Not Given';
+    return U.trim(v || '');
+  }
+
+  /** 英文判斷題：題幹寫明 True (T) / False (F) / Not Given (NG)，表格是敘述＋作答格 */
+  function detectTfngEn(q, t) {
+    var stem = String(q.stem || '');
+    if (!/true\s*\(?\s*t\s*\)?\s*,?\s*false\s*\(?\s*f\s*\)?/i.test(stem) || !/not\s*given/i.test(stem)) return false;
+    var rows = (q.table && q.table.rows) || [];
+    var tRows = (t && t.table && t.table.rows) || [];
+    var subs = [];
+    rows.forEach(function (row, ri) {
+      var stmt = cellText(row[1]) || cellText(row[0]);
+      if (!stmt || stmt.length < 8) return;
+      var ans = '';
+      var tr = tRows[ri] || [];
+      for (var c = 2; c < Math.max(row.length, tr.length); c++) {
+        var sv = cellText(row[c]);
+        var tv = cellRaw(tr[c]);
+        if (tv && !sv) { ans = tv; break; }
+      }
+      subs.push({
+        id: 'q' + q.no + '_' + ri,
+        label: cellText(row[0]),
+        prompt: stmt,
+        choices: ['True', 'False', 'Not Given'],
+        answer: mapTfngAns(ans),
+        marks: 0,
+        kind: 'tfng'
+      });
+    });
+    if (subs.length < 2) return false;
+    q._tfngEn = true;
+    q.tableType = 'tfng';
+    q.subQuestions = subs;
+    q.table = null;
+    q.answer = subs.map(function (x) {
+      return (x.label ? x.label + ' ' : '') + x.prompt + '：' + (x.answer || '—');
+    }).join('\n');
+    return true;
+  }
+
+  /** 題幹相似度：字詞交集比例（英文答案區對位用） */
+  function stemSim(a, b) {
+    var wa = U.trim(a || '').toLowerCase().split(/\s+/).filter(function (w) { return w.length > 2; });
+    var wb = U.trim(b || '').toLowerCase().split(/\s+/).filter(function (w) { return w.length > 2; });
+    if (!wa.length || !wb.length) return 0;
+    var setb = {};
+    wb.forEach(function (w) { setb[w] = 1; });
+    var hit = 0;
+    wa.forEach(function (w) { if (setb[w]) hit++; });
+    return hit / Math.max(wa.length, wb.length);
+  }
+
+  /** 英文答案區：教師題的題幹若與某學生題幾乎一樣 → 該教師題成為那一題的答案；
+      之後的連續段落（答案內容、『1. B』答案鍵）全部併進去。 */
+  function regroupEnglishAnswers(studentQs, teacherQs) {
+    var used = {}, holder = null, out = [];
+    teacherQs.forEach(function (t) {
+      var best = null, bestScore = 0;
+      studentQs.forEach(function (q) {
+        if (used[q.no]) return;
+        var sc = stemSim(t.stem, q.stem);
+        if (sc > bestScore) { bestScore = sc; best = q; }
+      });
+      if (best && bestScore >= 0.45) {
+        used[best.no] = 1;
+        t.no = best.no;
+        t._plainBody = [];
+        holder = t;
+        out.push(t);
+      } else if (holder) {
+        var a = U.trim(t.stem || '');
+        if (a) holder._plainBody.push(a);
+      }
+    });
+    return out;
+  }
+
+  /** 取「較完整」的儲存格文字（填充題要有底線，visible 可能會濾掉） */
+  function cellRich(c) {
+    var t = U.trim((c && c.text) || '');
+    var v = cellText(c);
+    return t.length >= v.length ? t : v;
+  }
+
+  /** 空白正規化（連續空白收成 1 個），並保留「正規化位置 → 原始位置」對照 */
+  function normWithMap(t) {
+    var out = '', map = [], prevSpace = false;
+    for (var i = 0; i < t.length; i++) {
+      var ch = t.charAt(i);
+      if (/[\s\u3000]/.test(ch)) {
+        if (prevSpace) continue;
+        prevSpace = true; out += ' ';
+      } else { prevSpace = false; out += ch; }
+      map.push(i);
+    }
+    map.push(t.length);
+    return { s: out, map: map };
+  }
+
+  /**
+   * 摘要／筆記填充題：整段文字放在一格裡，空格用「(a) ______」表示。
+   * 學生版有底線、教師版把答案填在同一位置。
+   * 取答案的方式是「對齊兩份文字」：以空白前後的文字當錨點，
+   * 教師版在兩個錨點之間多出來的字就是答案（不是取到下一個空格為止，
+   * 否則會把整句尾都當成答案 —— 實測踩過）。
+   */
+  function detectInlineBlanks(q, t) {
+    var rows = (q.table && q.table.rows) || [];
+    if (!rows.length) return false;
+    var sText = rows.map(function (r) {
+      return (r || []).map(cellRich).filter(Boolean).join('  ');
+    }).join('\n');
+    var tRows = (t && t.table && t.table.rows) || [];
+    var tText = tRows.map(function (r) {
+      return (r || []).map(cellRich).filter(Boolean).join('  ');
+    }).join('\n');
+    if (!tText) return false;
+
+    var sN = normWithMap(sText), tN = normWithMap(tText);
+    var RE_BLANK = /\(([a-z0-9]{1,3})\)[\s\u3000]*(?:_{2,}|＿{2,}|\.{3,}|—{2,})/g;
+    var marks = [], m;
+    while ((m = RE_BLANK.exec(sN.s))) marks.push({ key: m[1], ms: m.index, me: m.index + m[0].length });
+    if (marks.length < 2) return false;
+
+    var cursorN = 0, blanks = [];
+    marks.forEach(function (mk) {
+      var head = '(' + mk.key + ')';
+      var anchor = sN.s.slice(Math.max(0, mk.ms - 26), mk.ms + head.length);
+      var ap = tN.s.indexOf(anchor, Math.max(0, cursorN - 26));
+      if (ap < 0) ap = tN.s.indexOf(anchor);
+      var startN;
+      if (ap >= 0) startN = ap + anchor.length;
+      else {
+        var hp = tN.s.indexOf(head, cursorN);
+        if (hp < 0) return;
+        startN = hp + head.length;
+      }
+      /* 空白之後的文字（錨點）：在教師版裡找出同一段文字，兩者之間就是答案 */
+      /* 錨點不可包含底線（學生版的空白在教師版沒有底線，會找不到） */
+      var tail = sN.s.slice(mk.me, mk.me + 30).split(/[_＿]/)[0];
+      var endN = -1;
+      if (tail.replace(/\s/g, '').length >= 4) endN = tN.s.indexOf(tail, startN);
+      if (endN < 0) {
+        var nextHead = null;
+        for (var k = 0; k < marks.length; k++) if (marks[k].ms > mk.ms) { nextHead = '(' + marks[k].key + ')'; break; }
+        if (nextHead) endN = tN.s.indexOf(nextHead, startN);
+      }
+      if (endN < 0) endN = tN.s.length;
+      var ans = U.trim(tText.slice(tN.map[Math.min(startN, tN.map.length - 1)],
+        tN.map[Math.min(endN, tN.map.length - 1)]))
+        .replace(/^[\s\u3000.．、:：_＿\-–—]+/, '')
+        .replace(/[\s\u3000]+$/, '')
+        .trim();
+      /* 依題幹的「ONE word / TWO words」限制字數（多出來的是句尾，不是答案） */
+      var want = /one word/i.test(q.stem) ? 1 : (/two words/i.test(q.stem) ? 2 : (/three words/i.test(q.stem) ? 3 : 0));
+      if (want) {
+        var ws = ans.split(/[\s\u3000]+/).filter(Boolean);
+        if (ws.length > want) ans = ws.slice(0, want).join(' ');
+      } else if (ans.length > 40) {
+        ans = ans.split(/[\s\u3000]+/).slice(0, 3).join(' ');
+      }
+      cursorN = endN;
+      blanks.push({
+        key: mk.key, id: 'q' + q.no + '_blk_' + mk.key,
+        label: '(' + mk.key + ')', answer: ans, marks: 0
+      });
+    });
+    if (blanks.filter(function (b) { return b.answer; }).length < 2) return false;
+
+    q._fillin = true;
+    q.fillin = { text: sText, blanks: blanks };
+    q.subQuestions = blanks.map(function (b) {
+      return { id: b.id, label: b.label, prompt: '', answer: b.answer, marks: b.marks, kind: 'fill' };
+    });
+    q.answer = blanks.map(function (b) { return b.label + ' ' + (b.answer || '—'); }).join('\n');
+    return true;
+  }
+
   /* ---------- 合併學生版 + 教師版 ---------- */
   function mergeVersions(studentQs, teacherQs) {
     var tmap = {};
@@ -741,6 +1028,21 @@
       else if (q.table) q.type = 'table';
       else q.type = 'text';
 
+      /* 表格結構偵測（配對題／表格內選擇題／英文判斷題）→ 先於一般 diff 轉換題型 */
+      if (q.type === 'table') {
+        if (detectMatching(q, t)) q.type = 'matching';
+        else if (detectCellMcq(q)) q.type = 'mcq';
+        else if (detectTfngEn(q, t)) { /* tableType 已設，subs 已建 */ }
+        else if (detectInlineBlanks(q, t)) { /* 摘要填充：subs 已建，逐格抽答案 */ }
+      }
+      if (q.type === 'matching') {
+        q.answer = (q.matching.items || []).map(function (it) {
+          var a = q.matching.answers[it.id] || '';
+          var o = q.matching.options.filter(function (x) { return x.key === a; })[0];
+          return (it.label ? it.label + '：' : '') + a + (o ? '. ' + o.text : '');
+        }).join('\n');
+        return;
+      }
       if (!t) { q._warn = '教師版找不到第 ' + q.no + ' 題'; return; }
 
       /* 答案文字：優先紅字，其次教師版題目後的所有文字 */
@@ -786,7 +1088,7 @@
           : U.trim((q.explanation || '').split('\n')[0]);
       }
 
-      if (q.type === 'table') buildSubQuestions(q, t);
+      if (q.type === 'table' && !q._tfngEn && !q._fillin) buildSubQuestions(q, t);
       delete q.gridMarks;
     });
 
@@ -855,12 +1157,41 @@
     var header = tHead.map(function (c) { return U.trim(c.text || ''); });
 
     var n = Math.max(sRows.length, tRows.length);
+    var lastSub = null, prevLabel = '', prevRow = null;
     for (var r = 0; r < n; r++) {
       var sr = sRows[r] || [], tr = tRows[r] || [];
       var rowLabel = U.trim((sr[0] && sr[0].text) || (tr[0] && tr[0].text) || '');
       var seq = (String(rowLabel).match(/^[\(（]\d+[\)）]/) || [])[0] || '';
       var cn = Math.max(sr.length, tr.length);
       var tickSeen = false;
+      var subsLenBefore = subs.length;
+
+      /* 「字數格子列」：學生版整列都是空格（原卷給 N 個小格限制字數）、
+         教師版在格子裡逐字填答案 → 併回上一題項的子題（答案合成一個詞），
+         不要逐格建子題（答案會變得支離破碎） */
+      var sAllEmpty = sr.length && sr.every(function (c) { return !U.trim((c && c.text) || ''); });
+      var tJoined = tr.map(function (c) { return U.trim((c && c.text) || ''); }).join('');
+      if (sAllEmpty && tJoined) {
+        if (lastSub) {
+          if (lastSub.answer.indexOf(tJoined) < 0) lastSub.answer = U.trim((lastSub.answer || '') + tJoined);
+          lastSub.boxes = tr.length;
+        } else if (prevLabel) {
+          /* 教師版答案全在嵌套格子裡（外層格是空的）→ 用上一列的敘述當標籤；
+             子題 id 指回上一列的作答格，學生的輸入框才對得到這個子題 */
+          var pe = -1;
+          (prevRow || []).forEach(function (c, ci) {
+            if (pe < 0 && !U.trim((c && c.text) || '')) pe = ci;
+          });
+          if (pe < 0) pe = 0;
+          lastSub = {
+            id: 'q' + q.no + '_' + (r - 1) + '_' + pe,
+            label: prevLabel, prompt: '',
+            answer: tJoined, marks: 0, kind: 'fill', boxes: tr.length
+          };
+          subs.push(lastSub);
+        }
+        continue;   /* 這一列不逐格建子題 */
+      }
 
       /* 真／假／無從判斷：首列為題幹，正確欄位由教師版紅字標記 */
       if (q.tableType === 'tfng' && r > 0) {
@@ -918,6 +1249,12 @@
         });
       }
       if (tickSeen) continue;
+      /* 敘述列（非空格列）若沒建出子題 → 重置群組，下一個格子列自成一組 */
+      if (!sAllEmpty) {
+        lastSub = (subs.length > subsLenBefore) ? subs[subs.length - 1] : null;
+      }
+      if (rowLabel) prevLabel = rowLabel;
+      prevRow = sr.length ? sr : tr;
     }
 
     q.subQuestions = subs;
@@ -1054,6 +1391,23 @@
         var rEnd = findIndex(top, function (b, k) { return k > rStart && /^END OF READING TEXT/i.test(b.text); });
         if (rStart >= 0 && rEnd > rStart) {
           passages = extractEnglishArticle(top, rStart, rEnd);
+        } else {
+          /* 文章包在表格裡（行號欄＋內文，無 Reading Text 標記）→
+             取「長段落格」併成文章（行號邊欄略過） */
+          var art = [];
+          top.forEach(function (b) {
+            if (b.kind !== 'tr' || art.length > 80) return;
+            var best = '', bestLen = 0;
+            (b.cells || []).forEach(function (c) {
+              var v = U.trim(c.text || '');
+              if (/^\d{1,4}$/.test(v)) return;
+              if (v.length > bestLen) { bestLen = v.length; best = v; }
+            });
+            if (bestLen >= 50) art.push(best);
+          });
+          if (art.join('').replace(/\s/g, '').length > 300) {
+            passages = [{ id: 'p1', title: 'Reading Text', text: art.join('\n') }];
+          }
         }
       } else if (matIdx >= 0) {
         var doneIdx = findIndex(top, function (b, k) { return k > matIdx && isShort(b) && RE_DONE.test(b.text); });
@@ -1068,12 +1422,29 @@
       }
 
       /* ---- 學生版題目 ---- */
+      /* 英文卷區段：建議答案／Annotated Text 的「最後一次」出現（避開目錄條目） */
+      var enSugStart = -1, enSugEnd = -1, enAnnStart = -1, enEndQ = -1;
+      if (isEnglish) {
+        top.forEach(function (b, i) {
+          var tt = U.trim(b.text || '');
+          if (/suggested answers/i.test(tt) && !/^end of/i.test(tt)) enSugStart = i;   /* 不抓 END 那行 */
+          if (/^end of suggested answers/i.test(tt) && enSugEnd < 0) enSugEnd = i;
+          if (/^annotated text/i.test(tt) && tt.length <= 30) enAnnStart = i;
+          if (/^end of questions/i.test(tt)) enEndQ = i;
+        });
+      }
       var sFrom, sEnd;
       if (isEnglish) {
         sFrom = findIndex(top, function (b) { return /^\s*Questions\s*$/i.test(b.text); });
         if (sFrom < 0) sFrom = 0;
-        sEnd = findIndex(top, function (b, k) { return k >= sFrom && /^END OF QUESTIONS/i.test(b.text); });
-        if (sEnd < 0) sEnd = top.length;
+        /* 學生卷到「END OF QUESTIONS／建議答案／Annotated Text」為止。
+           Annotated Text 一律不採用（老師指定：不用加進試卷） */
+        var limits = [];
+        if (enEndQ >= 0) limits.push(enEndQ);
+        if (enSugStart > 10 && (enSugEnd > enSugStart || enSugStart > top.length * 0.3)) limits.push(enSugStart);
+        if (enAnnStart > 10) limits.push(enAnnStart);
+        sEnd = limits.length ? Math.min.apply(null, limits) : top.length;
+        if (sEnd <= sFrom) sEnd = top.length;
       } else {
         /* 從最前面開始掃，才能吃到「甲部」標記與甲部題目（含 答題簿 格式） */
         sFrom = 0;
@@ -1087,53 +1458,29 @@
       /* ---- 教師版題目 ---- */
       var teacherQs = [];
       if (isEnglish) {
-        teacherIdx = findIndex(top, function (b) { return /Suggested Answers/i.test(b.text); });
-      }
-      if (teacherIdx >= 0) {
-        var tFrom = isEnglish
-          ? teacherIdx + 1
-          : findIndex(top, function (b, k) { return k >= teacherIdx && isShort(b) && RE_PASS.test(b.text); });
+        /* 只掃「建議答案」區段；Annotated Text 一律不用（答案不在裡面） */
+        if (enSugStart > 10 && (enSugEnd > enSugStart || enSugStart > top.length * 0.3)) {
+          var tEndEn = enSugEnd > enSugStart ? enSugEnd
+            : (enAnnStart > enSugStart ? enAnnStart : top.length);
+          teacherQs = collectEnglish(top, enSugStart + 1, tEndEn, true);
+        }
+      } else if (teacherIdx >= 0) {
+        var tFrom = findIndex(top, function (b, k) { return k >= teacherIdx && isShort(b) && RE_PASS.test(b.text); });
         if (tFrom < 0) tFrom = teacherIdx;
-        var tEnd = isEnglish
-          ? top.length
-          : findIndex(top, function (b, k) { return k > tFrom && isShort(b) && RE_END.test(b.text); });
+        var tEnd = findIndex(top, function (b, k) { return k > tFrom && isShort(b) && RE_END.test(b.text); });
         if (tEnd < 0) tEnd = top.length;
-        teacherQs = isEnglish
-          ? collectEnglish(top, tFrom, tEnd, true)
-          : collectQuestions(top, tFrom, tEnd, true);
+        teacherQs = collectQuestions(top, tFrom, tEnd, true);
       } else {
         warnings.push('找不到「教師版」區段：本卷可能只有學生版，答案需自行填寫或另外上傳教師卷。');
       }
 
-      /* ---- 英文卷：把「建議答案」對應到學生題 ----
-         教師版區塊通常一題一塊（按題序排列），故以索引 1:1 對位；
-         若區塊以題號開頭（如 "21. B"），改用題號對位。
-         只有「乾淨的單一字母答案」才當成選擇題答案，避免把 Annotated Text
-         之類的內文誤判成答案。 */
+      /* ---- 英文卷：把答案區的教師題對位回學生題 ----
+         作法：教師題的題幹與哪一題學生題最像，就當成那一題的「答案持有者」；
+         之後連續的答案段落（或『1. B』這種答案鍵）全部併進持有者。
+         表格型教師題（配對／判斷／填充）同樣靠題幹對位，
+         mergeVersions 內再以儲存格差異抓答案。 */
       if (isEnglish && teacherQs.length) {
-        var ansPool = {};
-        teacherQs.forEach(function (t, k) {
-          var a = U.trim(t.stem || '');
-          if (!a) return;
-          var numMatch = a.match(/^(?:Q\s*)?(\d{1,2})\s*[\.、)．：:]/i);
-          ansPool[numMatch ? parseInt(numMatch[1], 10) : (k + 1)] = a;
-        });
-        studentQs.forEach(function (q, idx) {
-          var a = ansPool[q.no] || ansPool[idx + 1];
-          if (!a) return;
-          q.answer = a;
-          /* 純字母，或 "21. B" / "(B)" / "Answer: B" 這種 */
-          var m = a.match(/\b([A-Ha-h])\b\s*$/) || a.match(/^\s*(?:Q\s*\d{1,2}\s*[\.、)．：:]\s*)?[（(]?([A-Ha-h])[）)]?\s*$/);
-          if (m && a.length <= 12) q.answerKeys = [m[1].toUpperCase()];
-        });
-        teacherQs = studentQs.map(function (q, idx) {
-          return {
-            no: idx + 1,
-            _redAnswers: (q.answerKeys && q.answerKeys.length) ? q.answerKeys : [],
-            _plainBody: q.answer ? [q.answer] : [],
-            answer: q.answer, stem: '', options: [], table: null
-          };
-        });
+        teacherQs = regroupEnglishAnswers(studentQs, teacherQs);
       }
 
       /* ---- 合併 ---- */

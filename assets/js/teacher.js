@@ -168,6 +168,7 @@
    * ——否則會出現「老師指派了、學生卻看不到」。
    */
   function saveAndSync(quiz, okMsg, onSaved) {
+    (quiz.questions || []).forEach(syncAnswerKeys);
     quiz.updatedAt = U.nowISO();
     return Store.quiz.save(quiz).then(function () {
       return Backend.publishQuiz(quiz).then(function () {
@@ -645,6 +646,7 @@
       renderEditor(view, quiz);
     }
     function save() {
+      (quiz.questions || []).forEach(syncAnswerKeys);
       quiz.title = U.trim(tInp.value) || quiz.title;
       quiz.level = U.trim(lInp.value);
       quiz.subject = subSel.value;
@@ -652,6 +654,7 @@
       Store.quiz.save(quiz).then(function () { U.toast('已儲存', 'ok'); });
     }
     function assign() {
+      (quiz.questions || []).forEach(syncAnswerKeys);
       quiz.title = U.trim(tInp.value) || quiz.title;
       quiz.level = U.trim(lInp.value);
       quiz.subject = subSel.value;
@@ -670,6 +673,7 @@
       U.download(U.slug(quiz.title) + '.json', JSON.stringify(quiz, null, 2));
     }
     function publish() {
+      (quiz.questions || []).forEach(syncAnswerKeys);
       quiz.title = U.trim(tInp.value) || quiz.title;
       quiz.level = U.trim(lInp.value);
       quiz.subject = subSel.value;
@@ -719,6 +723,19 @@
     return box;
   }
 
+  /**
+   * 由「正確答案」文字推出自動批改用的答案鍵。
+   * 有些原檔（例如英文卷的 Suggested Answers）**沒有標記選擇題答案**，
+   * 老師只要在這裡填 A/B/C/D，就能自動批改。
+   * 只接受單純的字母答案，避免把整句當成答案。
+   */
+  function syncAnswerKeys(q) {
+    if (!q || q.type !== 'mcq') return;
+    var a = U.trim(q.answer || '');
+    var m = a.match(/^[（(]?([A-Ha-h])[）)]?(?:[.、)．:：]\s*.*)?$/);
+    q.answerKeys = m ? [m[1].toUpperCase()] : [];
+  }
+
   function questionEditor(quiz, q, qi, refresh) {
     var box = U.el('div.q');
     box.appendChild(U.el('div.row.between', {}, [
@@ -726,7 +743,7 @@
         U.el('div.q-no', { text: String(q.no != null ? q.no : qi + 1) }),
         (function () {
           var s = U.el('select.input', { style: { maxWidth: '150px' } });
-          [['text', '文字題'], ['mcq', '選擇題'], ['table', '填充／表格題']].forEach(function (o) {
+          [['text', '文字題'], ['mcq', '選擇題'], ['table', '填充／表格題'], ['matching', '配對題']].forEach(function (o) {
             s.appendChild(U.el('option', { value: o[0], text: o[1] }));
           });
           s.value = q.type || 'text';
@@ -887,15 +904,28 @@
     /* 答案 / 解析 */
     var an2 = U.el('textarea.input', { rows: q.type === 'mcq' ? 1 : 3 });
     an2.value = q.answer || '';
-    an2.addEventListener('input', function () { q.answer = an2.value; });
+    an2.addEventListener('input', function () { q.answer = an2.value; syncAnswerKeys(q); paintKeyHint(); });
+    var keyHint = U.el('div.tiny.mt1', {});
+    function paintKeyHint() {
+      if (q.type !== 'mcq') { keyHint.textContent = ''; return; }
+      if (q.answerKeys && q.answerKeys.length) {
+        keyHint.innerHTML = '✔ 自動批改答案鍵：<b>' + U.esc(q.answerKeys.join('、')) + '</b>';
+        keyHint.className = 'tiny mt1 muted';
+      } else {
+        keyHint.innerHTML = '<span class="warnbox">⚠ 這一題還沒有答案，學生提交後無法自動計分。' +
+          '請在此填 <b>A／B／C／D</b>（原檔若沒有標記答案，需老師手動補）。</span>';
+        keyHint.className = 'tiny mt1';
+      }
+    }
     var ex = U.el('textarea.input', { rows: 2 });
     ex.value = q.explanation || '';
     ex.addEventListener('input', function () { q.explanation = ex.value; });
 
     box.appendChild(U.el('div.inline-fields.mt2', {}, [
-      U.el('div', {}, [U.el('label.tiny.muted', { text: '正確答案（學生提交後會看到）' }), an2]),
+      U.el('div', {}, [U.el('label.tiny.muted', { text: '正確答案（學生提交後會看到）' }), an2, keyHint]),
       U.el('div', {}, [U.el('label.tiny.muted', { text: '答案解析' }), ex])
     ]));
+    paintKeyHint();
 
     return box;
   }

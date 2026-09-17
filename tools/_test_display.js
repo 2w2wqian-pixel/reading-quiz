@@ -28,7 +28,15 @@ FakeNode.prototype.getAttribute=function(k){return this.attrs[k];};
 FakeNode.prototype.querySelector=function(){return null;};
 Object.defineProperty(FakeNode.prototype,'innerHTML',{get:function(){return this._html;},set:function(v){this._html=v;}});
 Object.defineProperty(FakeNode.prototype,'textContent',{get:function(){return this._text;},set:function(v){this._text=v;}});
-FakeNode.prototype.classList={add:function(){},remove:function(){},toggle:function(){}};
+FakeNode.prototype.classList={add:function(){},remove:function(){},toggle:function(){},contains:function(){return false;}};
+FakeNode.prototype.style={};
+FakeNode.prototype.querySelector=function(sel){
+  /* 讓「tw.querySelector('input,select,textarea')」在樁上也能判斷 */
+  var re=/input|select|textarea/;
+  function walk(n){ if(!n||!n.children)return null; for(var i=0;i<n.children.length;i++){var c=n.children[i]; if(c.tagName&&re.test(c.tagName))return c; var r=walk(c); if(r)return r;} return null;}
+  return walk(this);
+};
+FakeNode.prototype.setAttribute=function(k,v){this.attrs[k]=v; if(k==='maxlength')this.attrs.maxlength=v;};
 var uidc=0;
 var U={
   trim:function(s){return String(s==null?'':s).replace(/^[\s\u3000]+|[\s\u3000]+$/g,'');},
@@ -72,8 +80,22 @@ function countNodes(n,tag){var c=(n.tagName===tag?1:0);(n.children||[]).forEach(
     const r=await Docx.parse(ab,{fileName:path.basename(f)});
     console.log('\n========',path.basename(f),'========');
     console.log('questions:',r.questions.length,'mcq:',r.questions.filter(q=>q.type==='mcq').length,'table:',r.questions.filter(q=>q.type==='table').length);
+    if(process.env.DUMP_JSON){
+      process.env.DUMP_JSON.split(',').map(Number).forEach(function(n){
+        var q=r.questions.filter(function(x){return x.no===n;})[0];
+        if(!q){console.log('=== Q'+n+' MISSING');return;}
+        console.log('=== Q'+q.no+' '+q.type+' marks='+q.marks+' tt='+(q.tableType||''));
+        console.log('  stem: '+String(q.stem||'').replace(/\n/g,' | ').slice(0,160));
+        console.log('  answer: '+JSON.stringify(String(q.answer||'').slice(0,160)));
+        console.log('  keys: '+JSON.stringify(q.answerKeys||[]));
+        if(q.options&&q.options.length) console.log('  options: '+JSON.stringify(q.options).slice(0,320));
+        if(q.matching) console.log('  matching: items='+JSON.stringify(q.matching.items.map(function(i){return i.label;}))+' opts='+JSON.stringify(q.matching.options.map(function(o){return o.key+'='+o.text;}))+' ans='+JSON.stringify(q.matching.answers));
+        if(q.subQuestions&&q.subQuestions.length) console.log('  subs: '+JSON.stringify(q.subQuestions.map(function(x){return x.id+'|'+(x.label||'').slice(0,20)+'|'+(x.prompt||'').slice(0,20)+'|'+x.answer;})));
+      });
+    }
     r.questions.forEach(function(q){
-      if (q.no===1 || q.no===5 || q.no===9){
+      var dumpNos=(process.env.DUMP_NOS||'1,5,9').split(',').map(Number);
+      if (dumpNos.indexOf(q.no)>=0){
         console.log('\n--- DUMP Q'+q.no+' (type='+q.type+', tt='+(q.tableType||'')+') ---');
         console.log('stem:', q.stem);
         console.log('quotes('+q.quotes.length+'):', JSON.stringify(q.quotes).slice(0,300));
@@ -90,8 +112,13 @@ function countNodes(n,tag){var c=(n.tagName===tag?1:0);(n.children||[]).forEach(
         var qb=Forms.quotesBlock(q);
         var at=Forms.answerText(q,{});
         var rev=Forms.reveal(q,{});
+        var ansInfo = String(q.answer||'').replace(/\n/g,' ⏎ ').slice(0,60);
+        if (q.tableType==='tfng' && (q.subQuestions||[]).length) ansInfo += '  [子題答案] ' + q.subQuestions.map(function(x){return x.label+'='+x.answer;}).join(',');
+        var mInfo = q.matching ? (' M(items='+q.matching.items.length+',opts='+q.matching.options.length+',ans='+Object.keys(q.matching.answers).length+')') : '';
+        var kInfo = (q.answerKeys&&q.answerKeys.length) ? (' keys='+q.answerKeys.join(',')) : '';
+        var pInfo = r.passages && r.passages.length ? '' : ' [無文章]';
         console.log('#'+q.no,'['+q.section+']',q.type,'tt='+(q.tableType||''),
-          'skip='+(q.skip?1:0),
+          'skip='+(q.skip?1:0), 'marks='+q.marks, kInfo+mInfo+pInfo, '|', ansInfo,
           '| inputs='+inputs,'selects='+selects,'ta='+textareas,'tables='+tables,
           'quotes='+(qb?qb.children.length:0),'qhtml='+((q.quotesHtml||[]).length));
       }catch(e){console.log('#'+q.no,'ERROR',e.message,'\n',e.stack.split('\n').slice(0,3).join('\n'));}

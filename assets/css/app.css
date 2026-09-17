@@ -303,6 +303,31 @@ table.tbl tr:nth-child(even) td{background:#FFFDF7}
 
 /* 表格題：忠實還原成可填寫的表格 */
 .qtable-wrap{margin-top:10px;overflow-x:auto}
+/* ---------- 摘要／筆記填充（就地把空白換成輸入框） ---------- */
+.fillin{line-height:2.5;font-size:15px;background:#FFFDF8;border:1.5px solid var(--line);
+  border-radius:var(--r-sm);padding:14px 16px}
+.fillin .blk-lbl{font-weight:700;color:var(--ink-soft);margin-right:2px}
+.fillin input.boxinput{width:8.5em;margin:0 4px;text-align:center}
+.fillin .q-input{margin:0}
+
+/* ---------- 配對題（拖拽／點選） ---------- */
+.match-grid{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+.match-items{flex:1 1 260px;min-width:220px}
+.match-opts{flex:1 1 200px;min-width:180px;background:#FFFDF8;border:1.5px dashed var(--line);border-radius:var(--r-sm);padding:10px}
+.match-optstitle{margin-bottom:6px}
+.match-item{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px dashed var(--line)}
+.match-label{flex:1;font-size:14px}
+.match-slot{display:inline-flex;align-items:center;justify-content:center;min-width:52px;height:34px;
+  border:2px solid var(--pink-deep);border-radius:10px;background:#fff;font-weight:700;color:var(--pink-deep);
+  cursor:pointer;user-select:none;transition:background .15s}
+.match-slot.filled{background:var(--pink-soft,#FFE9F0)}
+.match-slot.over{background:#FFE1EC;transform:scale(1.05)}
+.match-chip{display:inline-block;margin:0 6px 6px 0;padding:5px 10px;border:1.5px solid var(--line);
+  border-radius:999px;background:#fff;font-size:13px;cursor:grab;user-select:none}
+.match-chip.sel{border-color:var(--pink-deep);background:#FFE9F0;box-shadow:0 0 0 2px #FFD3E0}
+/* 字數限制格子 */
+input.boxinput{text-align:center;letter-spacing:2px}
+
 table.qtable{display:table;table-layout:auto;border-collapse:collapse;width:100%;background:#FFFDF8;border:2px solid var(--line);border-radius:var(--r-sm);overflow:hidden}
 table.qtable th,table.qtable td{
   border:1px solid var(--line);padding:8px 10px;vertical-align:middle;font-size:14.5px;line-height:1.6;

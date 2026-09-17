@@ -39,19 +39,6 @@
     "_src": "published"
   },
   {
-    "id": "中三試卷-04-閱讀能力考核-xboo",
-    "title": "中三試卷(04)閱讀能力考核",
-    "level": "中三",
-    "source": "K5E_QB_F3_R04.docx",
-    "questionCount": 15,
-    "totalMarks": 55,
-    "passageCount": 2,
-    "createdAt": "2026-09-17T14:10:37.800Z",
-    "published": true,
-    "assignment": null,
-    "_src": "published"
-  },
-  {
     "id": "中二試卷-07-閱讀能力考核-ykbl",
     "title": "中二試卷(07)閱讀能力考核",
     "level": "中二",

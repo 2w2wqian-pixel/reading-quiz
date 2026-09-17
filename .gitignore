@@ -1,0 +1,12 @@
+
+
+# 測試過程產生的暫存檔（不要 commit）
+tools/_*.log
+tools/_d.html
+tools/_a.html
+tools/_g*.html
+tools/_dom*.html
+tools/_e2e_httpd.log
+tools/_e2e_dom.html
+tools/_e2e_index.bak
+tools/_shot*.png

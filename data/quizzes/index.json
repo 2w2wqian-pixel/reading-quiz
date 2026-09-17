@@ -22,16 +22,5 @@
     "published": false,
     "assignment": null,
     "_src": "published"
-  },
-  {
-    "id": "中六卷一閱讀能力考核-e2e",
-    "title": "中六卷一閱讀能力考核（已發佈）",
-    "level": "中六",
-    "source": "e2e",
-    "questionCount": 1,
-    "totalMarks": 3,
-    "passageCount": 0,
-    "createdAt": "2026-09-17T00:00:00.000Z",
-    "published": true
   }
 ]

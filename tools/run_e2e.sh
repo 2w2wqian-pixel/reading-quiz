@@ -17,10 +17,18 @@ TMPPAGE="$ROOT/_e2e_tmp.html"
 HTTPLOG="$ROOT/tools/_e2e_httpd.log"
 REPO_QUIZ="data/quizzes/中六卷一閱讀能力考核-e2e.json"
 ZH_REPO_ID="中六卷一閱讀能力考核-e2e"
+IDX_BAK="$ROOT/tools/_e2e_index.bak"
+
+# 先把老師真正的試卷清單複製一份備份（測試會往裡面加東西）
+cp -f data/quizzes/index.json "$IDX_BAK"
 
 cleanup() {
   rm -f "$TMPPAGE" "$REPO_QUIZ" "$HTTPLOG" tools/_e2e_dom.html
-  git checkout -- data/quizzes/index.json 2>/dev/null || true
+  # 用備份還原試卷清單（不能只靠 git，否則測試資料會被 commit 進去）
+  if [ -f "$IDX_BAK" ]; then cp -f "$IDX_BAK" data/quizzes/index.json; rm -f "$IDX_BAK"; fi
+  if grep -q "e2e" data/quizzes/index.json 2>/dev/null; then
+    echo "!! 警告：data/quizzes/index.json 仍有測試殘留，請檢查！"
+  fi
   rm -rf "$PROFILE"
   pkill -f "http.server $PORT" 2>/dev/null || true
 }

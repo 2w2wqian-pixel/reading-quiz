@@ -62,6 +62,96 @@
     });
   }
 
+  /**
+   * 指派追蹤：列出「指派給誰」以及每個人的完成狀態
+   * （未作答／已提交待批改／已批改＋分數），老師才能跟進。
+   */
+  function assignTrackDialog(quiz) {
+    Promise.all([
+      Backend.getRoster().catch(function () { return []; }),
+      Backend.listSubmissions(quiz.id).catch(function () { return []; })
+    ]).then(function (r) {
+      var roster = (r[0] || []).filter(function (s) { return s && s.role !== 'teacher'; });
+      var subs = r[1] || [];
+      var a = quiz.assignment || {};
+
+      function latestSub(sid) {
+        return subs.filter(function (x) { return String(x.studentId) === String(sid); })
+          .sort(function (x, y) { return String(y.submittedAt || '').localeCompare(String(x.submittedAt || '')); })[0] || null;
+      }
+      /* 一位學生可能分段提交多次 → 取最新一次代表進度 */
+      var targets = a.all ? roster : roster.filter(function (s) { return (a.ids || []).indexOf(s.id) >= 0; });
+
+      var nDone = 0, nGraded = 0;
+      var rowsHtml = targets.map(function (s) {
+        var sub = latestSub(s.id);
+        var st, tag;
+        if (!sub || !sub.submittedAt) { st = '未作答'; tag = 'gray'; }
+        else if (sub.score && sub.score.graded) {
+          st = '已批改 <b>' + (sub.score.total || 0) + ' / ' + (sub.score.max || 0) + '</b>';
+          tag = 'mint'; nGraded++; nDone++;
+        } else {
+          st = '已提交，待批改（自動 ' + ((sub.score && sub.score.total) || 0) + ' 分）';
+          tag = 'sun'; nDone++;
+        }
+        var when = sub && sub.submittedAt ? U.fmtDate(sub.submittedAt, true) : '—';
+        var ops = sub ? '<a class="btn xs" href="#/teacher/reports">批改</a>' : '';
+        return '<tr><td>' + U.esc(s.name || s.username) + '</td>' +
+          '<td><span class="tag ' + tag + '">' + st + '</span></td>' +
+          '<td class="tiny">' + U.esc(when) + '</td><td>' + ops + '</td></tr>';
+      }).join('');
+
+      var body = U.el('div');
+      body.appendChild(U.el('div.row.mt1', { style: { gap: '8px', flexWrap: 'wrap' } }, [
+        U.el('span.tag.mint', { text: '指派 ' + targets.length + ' 人' }),
+        U.el('span.tag.sky', { text: '已交 ' + nDone + ' 人' }),
+        U.el('span.tag.lav', { text: '已批改 ' + nGraded + ' 人' }),
+        U.el('span.tag' + (targets.length - nDone ? '.gray' : '.mint'), { text: '未交 ' + Math.max(0, targets.length - nDone) + ' 人' })
+      ]));
+      if (a.due) body.appendChild(U.el('div.tiny.muted.mt1', { text: '截止日期：' + a.due }));
+      if (a.note) body.appendChild(U.el('div.tiny.muted', { text: '備註：' + a.note }));
+
+      if (!targets.length) {
+        body.appendChild(U.el('div.warnbox.mt2', { text: '這份試卷還沒指派給任何人（或名冊是空的）。' }));
+      } else {
+        var t = U.el('table.tbl.mt2');
+        t.innerHTML = '<thead><tr><th>學生</th><th>狀態</th><th>提交時間</th><th></th></tr></thead><tbody>' + rowsHtml + '</tbody>';
+        body.appendChild(U.el('div.tbl-wrap', {}, [t]));
+      }
+
+      U.modal({
+        title: '指派追蹤：' + quiz.title,
+        width: 640,
+        body: body,
+        actions: [
+          { label: '關閉', close: true },
+          {
+            label: '修改指派', kind: 'lav', onClick: function () {
+              assignDialog(quiz, function () { U.toast('指派已更新', 'ok'); });
+            }
+          }
+        ]
+      });
+    }).catch(function (e) { U.toast('讀取追蹤資料失敗：' + ((e && e.message) || ''), 'bad'); });
+  }
+
+  /**
+   * 存檔並把指派同步上線。
+   * 指派資訊必須跟著試卷一起發佈（寫 repo／雲端），學生端的清單才看得到
+   * ——否則會出現「老師指派了、學生卻看不到」。
+   */
+  function saveAndSync(quiz, okMsg, onSaved) {
+    quiz.updatedAt = U.nowISO();
+    return Store.quiz.save(quiz).then(function () {
+      return Backend.publishQuiz(quiz).then(function () {
+        U.toast(okMsg + '，已同步上線（學生重新載入即可看到）', 'ok', 4500);
+      }).catch(function (e) {
+        U.toast(okMsg + '，但無法同步上線：' + ((e && e.message) || '請先設定 Firebase／GitHub') +
+          '（學生暫時看不到，請按「發佈」）', 'bad', 7000);
+      });
+    }).then(function () { onSaved && onSaved(); });
+  }
+
   /* ---------- 指派作業 ---------- */
   function assignDialog(quiz, onSaved) {
     Backend.getRoster().then(function (list) {
@@ -106,7 +196,7 @@
             label: '清除指派', onClick: function () {
               quiz.assignment = null;
               quiz.updatedAt = U.nowISO();
-              Store.quiz.save(quiz).then(function () { U.toast('已清除指派'); onSaved && onSaved(); });
+              saveAndSync(quiz, '已清除指派', onSaved);
             }
           },
           {
@@ -118,8 +208,7 @@
                 due: dueInp.value || '', note: U.trim(noteInp.value),
                 assignedAt: U.nowISO()
               };
-              quiz.updatedAt = U.nowISO();
-              Store.quiz.save(quiz).then(function () { U.toast('已指派作業', 'ok'); onSaved && onSaved(); });
+              saveAndSync(quiz, '已指派作業', onSaved);
             }
           }
         ]
@@ -778,6 +867,28 @@
         ]));
         return;
       }
+      /* 指派政策開關：預設「學生只看得到老師指派的試卷」 */
+      var assignOnlyOn = Settings.get().assignOnly !== false;
+      var policyChk = U.el('input', { type: 'checkbox' });
+      policyChk.checked = assignOnlyOn;
+      var policyHint = U.el('span.tiny.muted', {});
+      function drawPolicyHint() {
+        policyHint.textContent = policyChk.checked
+          ? '（學生端只會看到「指派給他」的試卷）'
+          : '（學生端會看到所有已發佈的試卷）';
+      }
+      drawPolicyHint();
+      policyChk.addEventListener('change', function () {
+        Settings.set({ assignOnly: policyChk.checked });
+        drawPolicyHint();
+        U.toast(policyChk.checked ? '已改為：指派後學生才看得到' : '已改為：學生看得到所有已發佈試卷', 'ok');
+      });
+      box.appendChild(U.el('div.card.tinted.mb2', {}, [
+        U.el('label.opt', {}, [policyChk, U.el('b', { text: ' 指派後學生才看得到試卷', style: { marginLeft: '6px' } })]),
+        U.el('div.tiny.muted.mt1', {}, [policyHint]),
+        U.el('div.tiny.muted', { text: '發佈＝把試卷放上線；指派＝指定給哪位學生。兩者都完成，學生才答得到。' })
+      ]));
+
       var tbl = U.el('table.tbl');
       tbl.innerHTML = '<thead><tr><th>試卷</th><th>年級</th><th>題數</th><th>分數</th><th>狀態</th><th>作業</th><th>更新</th><th>操作</th></tr></thead>';
       var tb = U.el('tbody');
@@ -789,26 +900,53 @@
         tr.appendChild(U.el('td', { text: m.totalMarks || 0 }));
         tr.appendChild(U.el('td', {}, [
           U.el('span.tag' + (m.published ? '.mint' : '.gray'), { text: m.published ? '已發佈' : '草稿' }),
-          m._src === 'published' || m._src === 'both' ? U.el('span.tag.sky', { text: ' repo', style: { marginLeft: '4px' } }) : null
+          m._repo ? U.el('span.tag.sky', { text: ' repo', style: { marginLeft: '4px' } }) : null,
+          m._cloud ? U.el('span.tag.sky', { text: ' 雲端', style: { marginLeft: '4px' } }) : null,
+          !m.published ? U.el('span.tiny.faint', { text: '（學生看不到）', style: { marginLeft: '4px' } }) : null
         ]));
         var a = m.assignment;
-        tr.appendChild(U.el('td', {}, [
-          a ? U.el('span.tag.sun', { text: (a.all ? '全班' : (a.ids || []).length + ' 人') + (a.due ? '・' + a.due : '') })
-            : U.el('span.tiny.faint', { text: '—' })
-        ]));
+        var asgTd = U.el('td');
+        if (a) {
+          asgTd.appendChild(U.el('span.tag.sun', { text: (a.all ? '全班' : (a.ids || []).length + ' 人') + (a.due ? '・' + a.due : '') }));
+          asgTd.appendChild(U.el('button.btn.xs', {
+            text: '追蹤', style: { marginLeft: '4px' },
+            onclick: function () { Backend.getQuiz(m.id).then(function (q) { assignTrackDialog(q || m); }); }
+          }));
+        } else {
+          asgTd.appendChild(U.el('span.tiny.faint', { text: '未指派' }));
+        }
+        tr.appendChild(asgTd);
         tr.appendChild(U.el('td', { text: U.fmtDate(m.createdAt) }));
         var ops = U.el('td');
         ops.appendChild(U.el('a.btn.xs', { href: '#/edit/' + m.id, text: '編輯' }));
+        /* 發佈／重新發佈：草稿一鍵上線（寫 repo／雲端），不必再進編輯頁 */
+        var pubBtn = U.el('button.btn.xs' + (m.published ? '' : '.mint'), {
+          text: m.published ? '重新發佈' : '發佈', style: { marginLeft: '4px' },
+          onclick: function () {
+            pubBtn.disabled = true; pubBtn.textContent = '發佈中…';
+            Backend.getQuiz(m.id).then(function (q) {
+              if (!q) throw new Error('找不到試卷內容，請先確認試卷是否存在');
+              return Backend.publishQuiz(q);
+            }).then(function () {
+              U.toast('已發佈「' + m.title + '」，學生重新載入就看得到（若已指派）', 'ok', 4200);
+              view.innerHTML = ''; Teacher.quizzes(view);
+            }).catch(function (e) {
+              pubBtn.disabled = false; pubBtn.textContent = m.published ? '重新發佈' : '發佈';
+              U.toast('發佈失敗：' + ((e && e.message) || ''), 'bad', 6000);
+            });
+          }
+        });
+        ops.appendChild(pubBtn);
         ops.appendChild(U.el('button.btn.xs.lav', {
-          text: '指派', style: { marginLeft: '4px' },
-          onclick: function () { Store.quiz.get(m.id).then(function (q) { assignDialog(q, function () { view.innerHTML = ''; Teacher.quizzes(view); }); }); }
+          text: a ? '改指派' : '指派', style: { marginLeft: '4px' },
+          onclick: function () { Backend.getQuiz(m.id).then(function (q) { assignDialog(q || m, function () { view.innerHTML = ''; Teacher.quizzes(view); }); }); }
         }));
         ops.appendChild(U.el('a.btn.xs', { href: '#/quiz/' + m.id, text: '試作', style: { marginLeft: '4px' } }));
         ops.appendChild(U.el('button.btn.xs', {
           text: '報表', style: { marginLeft: '4px' },
           onclick: function () { location.hash = '#/teacher/reports'; setTimeout(function () { RQ._reportQuiz = m.id; location.reload(); }, 50); }
         }));
-        var onGithub = m.published || m._src === 'published' || m._src === 'both';
+        var onGithub = m.published || m._repo;
         var delBtn = U.el('button.btn.xs.danger', {
           text: '刪除', style: { marginLeft: '4px' },
           onclick: function () {

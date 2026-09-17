@@ -213,6 +213,8 @@
     allowSelfRegister: false,
     /* 雲端草稿 */
     cloudDraft: true,
+    /* 學生端只顯示「老師指派」的試卷（指派後學生才看得到） */
+    assignOnly: true,
     /* 老師密碼（"salt:hash"） */
     teacherPass: '',
     /* 學生是否可在提交前看答案 */

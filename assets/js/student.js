@@ -213,7 +213,7 @@
     return lab + '　' + pr;
   }
 
-  function _radioCell(gname, opt, sub, opts) {
+  function _radioCell(gname, opt, sub, opts, showText) {
     var td = U.el('td');
     var lab = U.el('label.optcell');
     var r = U.el('input', { type: 'radio', name: gname, value: opt });
@@ -221,8 +221,86 @@
     if (opts.disabled) r.disabled = true;
     else r.addEventListener('change', function () { sub[gname] = opt; opts.onChange && opts.onChange({ sub: sub }); });
     lab.appendChild(r);
+    if (showText) lab.appendChild(U.el('span.optlbl', { text: opt }));
     td.appendChild(lab);
     return td;
+  }
+
+  /* 「選擇欄」判定：學生版會以空白或 ○ 呈現，教師版是紅色勾號。
+     要看 visible（真正的文字），不能用 _ct —— 否則「(A) ____」這種
+     帶底線的填充格會被誤判成選擇格。 */
+  function _isChoiceCell(c) {
+    if (c === undefined) return true;                 // 該列沒有這一欄 → 不影響判定
+    var v = U.trim((c && c.visible) || '');
+    if (v === '') return true;                        // 空白＝學生版還沒畫圈
+    return /^[○●◯◎]+$/.test(v);
+  }
+
+  /* 表頭選項文字：去掉 ○／● 與底線，例：「A○」→「A」 */
+  function _cleanOpt(t) {
+    return U.trim(String(t || '').replace(/[○●◯◎◆◇]/g, '').replace(/[_＿]+/g, ''));
+  }
+
+  /* 儲存格內容（保留原卷粗體／底線；沒有 html 就用純文字） */
+  function _cellInner(cell) {
+    if (!cell) return '';
+    if (cell.html) return String(cell.html).replace(/\n/g, '<br>');
+    var t = _ct(cell);
+    return t ? U.esc(t) : '';
+  }
+
+  /* 把一個儲存格畫進 td/th：填空→就地插入輸入框（保留「(A)」這類前後文字） */
+  function _fillCell(td, cell, key, sub, opts) {
+    var t = _ct(cell);
+    if (t && _hasBlank(t) && !_isAllBlankText(t)) {
+      td.appendChild(_cellFrag(t, key, sub, opts, key).node);
+    } else if (t === '' || _isFill(cell)) {
+      td.appendChild(_mkInput(key, sub[key], sub, opts));
+    } else if (cell && cell.html) {
+      td.innerHTML = _cellInner(cell);
+    } else {
+      td.innerHTML = U.esc(t);
+    }
+  }
+
+  function _mkTextarea(key, sub, opts) {
+    var ta = U.el('textarea.input', { rows: 2 });
+    ta.value = sub[key] || '';
+    if (opts.disabled) ta.disabled = true;
+    else ta.addEventListener('input', U.debounce(function () {
+      sub[key] = ta.value;
+      opts.onChange && opts.onChange({ sub: sub });
+    }, 300));
+    return ta;
+  }
+
+  /* 子題列表（沒有原始表格，或子題對不回表格時的保底版面） */
+  function _subList(q, subs, sub, opts, wrap) {
+    var t = U.el('table.qtable');
+    (subs || []).forEach(function (s) {
+      var tr = U.el('tr');
+      var labTd = U.el('td.qt-label');
+      var disp = _pickSubText(s);
+      if (_hasBlank(disp) && !_isAllBlankText(disp)) {
+        /* 題目文字本身含填空位置（如「(1) 第　段」）→ 直接在文字中插入輸入框 */
+        labTd.appendChild(_cellFrag(disp, s.id + '_p', sub, opts, s.id).node);
+        labTd.setAttribute('colspan', '2');
+        tr.appendChild(labTd);
+      } else {
+        labTd.innerHTML = U.nl2br(U.esc(disp));
+        tr.appendChild(labTd);
+        var td = U.el('td.qt-ans');
+        if (s.kind === 'tick' && (s.choices || []).length) {
+          td.appendChild(_mkSelect(s.id, sub[s.id], s.choices.filter(Boolean), sub, opts));
+        } else {
+          td.appendChild(_mkTextarea(s.id, sub, opts));
+        }
+        tr.appendChild(td);
+      }
+      t.appendChild(tr);
+    });
+    wrap.appendChild(t);
+    return wrap;
   }
 
   /* 判斷題右欄：正確／錯誤／無從判斷 三個單選（橫向排列） */
@@ -247,12 +325,22 @@
     opts = opts || {};
     var sub = ans.sub || {};
     var wrap = U.el('div.qtable-wrap');
+    var rows = (q.table && q.table.rows) || [];
+    var subs = (q.subQuestions || []).slice();
+
+    /* 子題 → 原表格儲存格：子題 id 形如 q<題號>_<列>_<欄>（解析時產生），
+       用它把輸入框放回原本那一格，表格版面才不會被壓成兩欄、內容才不會掉。 */
+    var subAt = {}, used = {};
+    subs.forEach(function (s) {
+      var m = /^q\d+_(\d+)_(\d+)$/.exec(String(s.id || ''));
+      if (m) subAt[m[1] + '_' + m[2]] = s;
+    });
 
     /* 1) 正確／錯誤／無從判斷（T/F/NG）：左欄敘述、右欄三個選項 */
     if (q.tableType === 'tfng') {
-      if ((q.subQuestions || []).length) {
+      if (subs.length) {
         var t1 = U.el('table.qtable.tfng');
-        q.subQuestions.forEach(function (s) {
+        subs.forEach(function (s) {
           var tr = U.el('tr');
           tr.appendChild(U.el('td.qt-stmt', { html: U.nl2br(s.prompt || s.label || '') }));
           var td = U.el('td.qt-ans');
@@ -263,11 +351,10 @@
         wrap.appendChild(t1);
         return wrap;
       }
-      var rows = q.table.rows || [];
       var hi = _isHeader(rows[0]) ? 0 : -1;
       var opts1 = hi >= 0 ? rows[hi].slice(1).map(_ct).filter(Boolean) : ['正確', '錯誤', '無從判斷'];
       var t2 = U.el('table.qtable.tfng');
-      rows.slice(hi >= 0 ? hi + 1 : 1).forEach(function (row, bi) {
+      rows.slice(hi >= 0 ? hi + 1 : 0).forEach(function (row, bi) {
         var label = _ct(row[0]);
         if (!label) return;
         var tr = U.el('tr');
@@ -281,125 +368,100 @@
       return wrap;
     }
 
-    /* 2) 結構化子題（填充／勾選）— 有教師版時 */
-    if ((q.subQuestions || []).length) {
-      var t3 = U.el('table.qtable');
-      q.subQuestions.forEach(function (s) {
-        var tr = U.el('tr');
-        var labTd = U.el('td.qt-label');
-        var disp = _pickSubText(s);
-        if (_hasBlank(disp) && !_isAllBlankText(disp)) {
-          /* 題目文字本身含填空位置（如「(1) 第　段」）→ 直接在文字中插入輸入框 */
-          var cf = _cellFrag(disp, s.id + '_p', sub, opts, s.id);
-          labTd.appendChild(cf.node);
-          labTd.setAttribute('colspan', '2');
-          tr.appendChild(labTd);
-        } else {
-          labTd.innerHTML = U.nl2br(U.esc(disp));
-          tr.appendChild(labTd);
-          var td = U.el('td.qt-ans');
-          if (s.kind === 'tick' && (s.choices || []).length) {
-            td.appendChild(_mkSelect(s.id, sub[s.id], s.choices.filter(Boolean), sub, opts));
-          } else {
-            var ta = U.el('textarea.input', { rows: 2 });
-            ta.value = sub[s.id] || '';
-            if (opts.disabled) ta.disabled = true;
-            else ta.addEventListener('input', U.debounce(function () {
-              sub[s.id] = ta.value;
-              opts.onChange && opts.onChange({ sub: sub });
-            }, 300));
-            td.appendChild(ta);
-          }
-          tr.appendChild(td);
-        }
-        t3.appendChild(tr);
-      });
-      wrap.appendChild(t3);
-      return wrap;
-    }
+    /* 2) 沒有原始表格 → 退回子題列表（保底） */
+    if (!rows.length) return _subList(q, subs, sub, opts, wrap);
 
-    /* 3) 原始表格：忠實還原（填充格 / 組合選擇格）*/
-    var rws = q.table.rows || [];
-    var hid = _isHeader(rws[0]) ? 0 : -1;
-    if (hid >= 0) {
-      var oc = rws[hid].slice(1);
-      /* 選擇格：選項欄有 ○／● 記號，或整欄是空白（學生版尚未畫圈） */
-      var grid = rws.slice(hid + 1).some(function (r) {
-        var cells = r.slice(1);
-        if (!cells.length) return false;
-        return cells.every(function (c) {
-          var t = _ct(c);
-          return t === '' || c.sym > 0 || /^[○●]+$/.test(t);
-        });
-      });
-      if (grid) {
-        var opts2 = oc.map(_ct).filter(Boolean);
-        var tg = U.el('table.qtable.grid');
-        var htr = U.el('tr');
-        htr.appendChild(U.el('th', { html: '&nbsp;' }));
-        opts2.forEach(function (o) { htr.appendChild(U.el('th', { text: o })); });
-        tg.appendChild(htr);
-        rws.slice(hid + 1).forEach(function (row, bi) {
-          var label = _ct(row[0]);
-          if (!label) return;
-          var items = label.match(/\([0-9]+\)/g) || [];
-          if (items.length < 2) {
-            /* 單列：label 本身就是題幹句子 → 一組選項 */
-            var tr0 = U.el('tr');
-            tr0.appendChild(U.el('td', { html: U.nl2br(U.esc(label)) }));
-            var g0 = q.id + '_g' + bi;
-            opts2.forEach(function (opt) { tr0.appendChild(_radioCell(g0, opt, sub, opts)); });
-            tg.appendChild(tr0);
-            return;
-          }
-          items.forEach(function (it, si) {
-            var tr = U.el('tr');
-            tr.appendChild(U.el('td', { text: it }));
-            var gname = q.id + '_g' + bi + '_' + si;
-            opts2.forEach(function (opt) { tr.appendChild(_radioCell(gname, opt, sub, opts)); });
-            tg.appendChild(tr);
-          });
-        });
-        wrap.appendChild(tg);
-        return wrap;
+    var dataRows = rows.slice(1);
+
+    /* 表頭列：取第一個「整列短文字」且該列沒有對應子題的列
+       （有些卷子的表頭不在第一列，例如第一列是 A/B/C/D 選項說明） */
+    var headIdx = -1;
+    rows.forEach(function (row, ri) {
+      if (headIdx >= 0) return;
+      if (!_isHeader(row)) return;
+      var hasSub = row.some(function (c, ci) { return ci > 0 && subAt[ri + '_' + ci]; });
+      if (!hasSub) headIdx = ri;
+    });
+
+    /* 選擇欄：某欄在「所有」資料列都是 ○／空白（學生版未畫圈）才算，
+       否則一律照原表還原 —— 這樣才不會把填充表誤判成勾選表而吃掉內容。 */
+    var nCols = rows.reduce(function (m, r) { return Math.max(m, r.length); }, 0);
+    var optCols = [];
+    if (headIdx >= 0 && dataRows.length) {
+      for (var ci = 1; ci < nCols; ci++) {
+        var allChoice = dataRows.every(function (r) { return _isChoiceCell(r[ci]); });
+        if (allChoice) optCols.push(ci);
       }
     }
-    var tf = U.el('table.qtable');
-    if (hid >= 0) {
-      var h = U.el('tr');
-      rws[hid].forEach(function (c) {
-        if (c && c.vmerge === 'continue') return;              // 縱向合併的續格不重畫
-        var th = U.el('th', { html: (c && c.html) ? c.html.replace(/\n/g, '<br>') : (_ct(c) ? U.esc(_ct(c)) : '&nbsp;') });
-        if (c && (c.span || 1) > 1) th.setAttribute('colspan', String(c.span));
-        h.appendChild(th);
-      });
-      tf.appendChild(h);
+    var tick = optCols.length >= 2;
+    function optLabel(ci) {
+      var t = headIdx >= 0 ? _ct(rows[headIdx][ci]) : '';
+      return _cleanOpt(t) || String.fromCharCode(65 + Math.max(0, ci - 1));
     }
-    rws.forEach(function (row, ri) {
-      if (ri === hid) return;
-      /* 略過整列都是空白的「排版空行」 */
-      if (row.every(function (c) { return _ct(c) === ''; })) return;
+
+    var tbl = U.el('table.qtable' + (tick ? '.grid' : ''));
+
+    /* 表頭列 —— 第一格（表頭欄的標題，如「引文」「片段」「事物」）也要畫出來 */
+    if (headIdx >= 0) {
+      var htr = U.el('tr');
+      rows[headIdx].forEach(function (c, ci) {
+        if (c && c.vmerge === 'continue') return;
+        var th = U.el('th');
+        if (tick && ci > 0) th.appendChild(U.el('span.optlbl', { text: optLabel(ci) }));
+        else th.innerHTML = _cellInner(c) || '&nbsp;';
+        if (c && (c.span || 1) > 1) th.setAttribute('colspan', String(c.span));
+        htr.appendChild(th);
+      });
+      tbl.appendChild(htr);
+    }
+
+    /* 資料列：逐列逐格還原，不跳過任何一列（含表頭欄） */
+    rows.forEach(function (row, ri) {
+      if (ri === headIdx || !row.length) return;
+      var rowSubs = row.map(function (c, ci) { return subAt[ri + '_' + ci]; }).filter(Boolean);
+      var allEmpty = row.every(function (c) { return !_ct(c) && !(c && c.sym); });
+      if (allEmpty && !rowSubs.length) return;
+
+      /* 勾選列：整列共用一個選項群組；若該列對應到唯一子題，就用子題 id 當作答鍵，
+         這樣學生選的欄位標題（＝答案名稱）會存進 ans.sub[子題]，對答案才對得上。 */
+      var tickKey = null;
+      if (tick) {
+        tickKey = (rowSubs.length === 1) ? rowSubs[0].id : (q.id + '_tick_r' + ri);
+      }
+      if (tickKey && rowSubs.length === 1) used[rowSubs[0].id] = true;
+
       var tr = U.el('tr');
       row.forEach(function (cell, ci) {
-        if (cell && cell.vmerge === 'continue') return;        // 縱向合併的續格不重畫
-        var td = U.el('td');
-        if (cell && (cell.span || 1) > 1) td.setAttribute('colspan', String(cell.span));
-        var t = _ct(cell);
-        if (_hasBlank(t) && !_isAllBlankText(t)) {
-          /* 文字中夾著填空位置（如「第　段」）→ 就地插入輸入框 */
-          td.appendChild(_cellFrag(t, q.id + '_r' + ri + 'c' + ci, sub, opts).node);
-        } else if (_isFill(cell)) {
-          td.appendChild(_mkInput(q.id + '_r' + ri + 'c' + ci, sub[q.id + '_r' + ri + 'c' + ci], sub, opts));
-        } else if (cell && cell.html) {
-          td.innerHTML = cell.html.replace(/\n/g, '<br>');     // 保留原卷粗體／底線
-        } else {
-          td.innerHTML = t ? U.esc(t) : '&nbsp;';
+        if (cell && cell.vmerge === 'continue') return;
+        var s = subAt[ri + '_' + ci];
+        if (s) used[s.id] = true;
+
+        /* ① 勾選欄 → 單選（選項名稱取表頭，如「肖像描寫」） */
+        if (tick && optCols.indexOf(ci) >= 0 && ci > 0) {
+          tr.appendChild(_radioCell(tickKey, optLabel(ci), sub, opts));
+          return;
         }
+        /* ② 子題是勾選（有 choices，但該表不是勾選格）→ 下拉選單 */
+        if (s && s.kind === 'tick' && (s.choices || []).length) {
+          var tdS = U.el('td');
+          tdS.appendChild(_mkSelect(s.id, sub[s.id], s.choices.filter(Boolean), sub, opts));
+          tr.appendChild(tdS);
+          return;
+        }
+        /* ③ 一般格：第一欄且該列有作答 → 用 th 當表頭欄，表格結構才完整 */
+        var isRowHead = ci === 0 && row.length > 1 && !s && !_isFill(cell) && _ct(cell).length <= 40;
+        var td = U.el(isRowHead ? 'th' : 'td');
+        if (cell && (cell.span || 1) > 1) td.setAttribute('colspan', String(cell.span));
+        _fillCell(td, cell, s ? s.id : (q.id + '_r' + ri + 'c' + ci), sub, opts);
         tr.appendChild(td);
       });
-      tf.appendChild(tr);
+      tbl.appendChild(tr);
     });
-    wrap.appendChild(tf);
+    wrap.appendChild(tbl);
+
+    /* 沒能對回原表格的子題 → 補在表格下方，確保一個都不漏 */
+    var orphans = subs.filter(function (s) { return !used[s.id]; });
+    if (orphans.length) wrap.appendChild(_subList(q, orphans, sub, opts, U.el('div')));
     return wrap;
   };
 
@@ -667,7 +729,21 @@
       }
 
       var assignedList = quizzes.filter(isAssigned);
-      var others = quizzes.filter(function (m) { return !isAssigned(m); });
+      /* 「指派後才看得到」：預設只顯示老師指派給我的試卷。
+         老師若把 ⑤ 的開關關掉，才會一併列出其他已發佈試卷。 */
+      var assignOnly = Settings.get().assignOnly !== false;
+      var others = assignOnly ? [] : quizzes.filter(function (m) { return !isAssigned(m); });
+
+      if (assignOnly && !assignedList.length) {
+        box.appendChild(U.el('div.empty', {}, [
+          U.el('div.big', { text: '📌' }),
+          U.el('div', { text: '目前沒有老師指派的試卷' }),
+          U.el('small', { text: '老師指派作業後，這裡就會出現，並顯示截止日期。' })
+        ]));
+        box.appendChild(U.el('h2.mt3', { text: '我的生詞本' }));
+        box.appendChild(vocabBook(myVocab));
+        return;
+      }
 
       if (assignedList.length) {
         var todo = assignedList.filter(function (m) { return !doneOf(m).length; });

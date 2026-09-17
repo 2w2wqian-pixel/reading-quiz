@@ -405,20 +405,29 @@
 
     /* ---------- 試卷 ---------- */
 
-    /** 雲端試卷清單：優先用 quizzesIndex；沒有就掃 quizzes 節點自己組 meta */
+    /** 雲端試卷清單：優先用 quizzesIndex；沒有就掃 quizzes 節點自己組 meta。
+     *  會出現在雲端節點的試卷一定是「發佈」寫上去的，一律標成已發佈
+     *  （否則舊資料裡的 published:false 會讓學生端過濾掉、老師端也顯示成草稿）。 */
     _cloudIndex: function () {
+      function meta(q) {
+        if (!q || !q.id) return null;
+        var m = metaOf(q, 'cloud');
+        m.published = true;
+        return m;
+      }
       if (Firebase.ok()) {
         return Firebase.get('quizzesIndex').then(function (j) {
-          if (Array.isArray(j) && j.length) return j;
-          return Cloud.getAll('quiz').then(function (list) {
-            return (list || []).map(function (q) { return q && q.id ? metaOf(q, 'cloud') : null; }).filter(Boolean);
-          });
+          if (Array.isArray(j) && j.length) {
+            return j.map(function (m) {
+              return (m && m.id) ? Object.assign({}, m, { published: true, _src: 'cloud' }) : null;
+            }).filter(Boolean);
+          }
+          return Cloud.getAll('quiz').then(function (list) { return (list || []).map(meta).filter(Boolean); });
         }).catch(function () { return []; });
       }
       if (Hook.ok()) {
-        return Cloud.getAll('quiz').then(function (list) {
-          return (list || []).map(function (q) { return q && q.id ? metaOf(q, 'cloud') : null; }).filter(Boolean);
-        }).catch(function () { return []; });
+        return Cloud.getAll('quiz').then(function (list) { return (list || []).map(meta).filter(Boolean); })
+          .catch(function () { return []; });
       }
       return Promise.resolve([]);
     },
@@ -433,12 +442,24 @@
         r[0].forEach(function (q) { map[q.id] = metaOf(q, 'local'); });
         (r[2] || []).forEach(function (m) {
           if (!m || !m.id) return;
-          if (!map[m.id]) map[m.id] = Object.assign({ _src: 'cloud' }, m);
+          var cur = map[m.id];
+          if (!cur) { map[m.id] = Object.assign({ _src: 'cloud', _cloud: true, published: true }, m); return; }
+          cur._cloud = true;
+          cur.published = true;
+          if (cur._src === 'local') cur._src = 'both';
         });
         (r[1] || []).forEach(function (m) {
           if (!m || !m.id) return;
-          if (!map[m.id]) map[m.id] = Object.assign({ _src: 'published' }, m);
-          else map[m.id]._src = 'both';
+          var cur = map[m.id];
+          if (!cur) { map[m.id] = Object.assign({ _src: 'published', _repo: true, published: true }, m); return; }
+          /* 本機也有這份 → repo 上有檔案就代表一定發佈過，
+             不能只改 _src，否則會出現「草稿 ＋ repo」這種自相矛盾的狀態。 */
+          cur.published = true;
+          cur._repo = true;
+          if (cur._src === 'local') cur._src = 'both';
+          ['title', 'level', 'questionCount', 'totalMarks', 'passageCount', 'assignment'].forEach(function (k) {
+            if ((cur[k] == null || cur[k] === '' || cur[k] === 0) && m[k] != null) cur[k] = m[k];
+          });
         });
         return Object.keys(map).map(function (k) { return map[k]; })
           .sort(function (a, b) { return String(b.createdAt || '').localeCompare(String(a.createdAt || '')); });
@@ -505,6 +526,12 @@
 
     publishQuiz: function (quiz) {
       var jobs = [];
+      /* 先標記已發佈，寫出去的副本（repo／雲端）才會帶著 published:true；
+         若最後失敗會回復原狀，不會留下「假已發佈」。 */
+      var wasPublished = !!quiz.published;
+      quiz.published = true;
+      quiz.updatedAt = U.nowISO();
+
       /* Firebase：同時寫試卷本體與清單，學生端才找得到（清單是學生列試卷的來源） */
       if (Firebase.ok()) {
         jobs.push(Firebase.put('quizzes/' + safeKey(quiz.id), quiz).then(function () {
@@ -527,11 +554,17 @@
             .then(function () { return GitHub.write(base + '/' + quiz.id + '.json', quiz, 'publish quiz: ' + quiz.title); });
         }));
       }
-      if (!jobs.length) return Promise.reject(new Error('請先設定 Firebase 或 GitHub（老師專區 → ⑤ 資料與同步）'));
+      if (!jobs.length) {
+        quiz.published = wasPublished;
+        return Promise.reject(new Error('請先設定 Firebase 或 GitHub（老師專區 → ⑤ 資料與同步）'));
+      }
       return Promise.all(jobs).then(function () {
-        quiz.published = true;
         return Store.quiz.save(quiz);
-      }).then(function () { return true; });
+      }).then(function () { return true; })
+        .catch(function (e) {
+          quiz.published = wasPublished;      // 發佈失敗 → 不要留下已發佈的假狀態
+          throw e;
+        });
     },
 
     /**

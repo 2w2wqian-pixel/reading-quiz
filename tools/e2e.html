@@ -41,6 +41,16 @@ function viewText() { return (document.getElementById('view') || {}).innerText |
 /* 只取 #view 的文字：document.body.textContent 會把測試腳本原始碼也算進去 */
 function bodyText() { return (document.getElementById('view') || {}).textContent || ''; }
 
+function rowText(title) {
+  var trs = document.querySelectorAll('#view table.tbl tbody tr');
+  for (var i = 0; i < trs.length; i++) if (trs[i].textContent.indexOf(title) >= 0) return trs[i].textContent;
+  return null;
+}
+function rowText(title) {
+  var trs = document.querySelectorAll('#view table.tbl tbody tr');
+  for (var i = 0; i < trs.length; i++) if (trs[i].textContent.indexOf(title) >= 0) return trs[i].textContent;
+  return null;
+}
 function finish(payload) {
   var bad = payload.results.filter(function (r) { return !r.ok; }).length;
   document.title = 'E2E ' + (bad ? 'FAIL(' + bad + ')' : 'OK');
@@ -52,7 +62,7 @@ function finish(payload) {
 
   /* 把結果打回 server 的 access log：--dump-dom 會受 virtual time budget
      影響（真實 I/O 還沒跑完就被截斷），用 log 才穩定。 */
-  var line = 'START' + payload.results.map(function (r) {
+  var line = 'START::N' + payload.results.length + '::' + payload.results.map(function (r) {
     return '||' + (r.ok ? 'PASS' : 'FAIL') + '::' + r.name + (r.ok ? '' : '::' + String(r.extra || '').slice(0, 120));
   }).join('') + '||ERRS::' + (payload.errors || []).join(';').slice(0, 200) + '||FATAL::' + String(payload.fatal || '').slice(0, 200) + 'END';
   (new Image()).src = '/__e2e?r=' + encodeURIComponent(line) + '&n=' + Math.random();
@@ -66,6 +76,7 @@ function seedQuiz(id, title) {
   return RQ.store.quiz.save({
     id: id, title: title, level: '中二', source: 'e2e', createdAt: new Date().toISOString(),
     published: true, totalMarks: 6,
+    assignment: { all: false, ids: ['stu_e2e'] },
     passages: [], 
     questions: [
       { no: 1, id: 'q1', type: 'text', stem: '試解釋「躊躇」的意思。', marks: 3, options: [], subQuestions: [], table: null, quotes: [] },
@@ -123,6 +134,69 @@ function seedQuiz(id, title) {
     check('D: 已提交生詞「鏗鏘」出現在學生專區生詞本', t3.indexOf('鏗鏘') >= 0);
     check('C: 不再顯示「還沒有收集生詞」', t3.indexOf('還沒有收集生詞') < 0);
     check('E: 作答過的試卷顯示「已完成」', t3.indexOf('已完成') >= 0);
+
+    /* ---------- F. 指派制：只有「指派給我」的試卷才看得到 ---------- */
+    function seedOne(id, title, assignment) {
+      return RQ.store.quiz.save({
+        id: id, title: title, level: '中二', source: 'e2e', published: true,
+        totalMarks: 3, passages: [], assignment: assignment || null,
+        questions: [{ no: 1, id: 'q1', type: 'text', stem: '題目', marks: 3 }]
+      });
+    }
+    await seedOne('e2e-no-assign', '未指派試卷E2E', null);
+    await seedOne('e2e-assign-all', '全班指派試卷E2E', { all: true, ids: [] });
+    await seedOne('e2e-assign-other', '指派別人試卷E2E', { all: false, ids: ['someone-else'] });
+    await seedOne('e2e-assign-me', '指派給我試卷E2E', { all: false, ids: ['stu_e2e'] });
+
+    location.hash = '#/';
+    await wait(400);
+    location.hash = '#/student';
+    await wait(3400);
+    var tF = bodyText();
+    check('F: 未指派的試卷不顯示', tF.indexOf('未指派試卷E2E') < 0, tF.slice(0, 120).replace(/\s+/g, ' '));
+    check('F: 指派給別人的試卷不顯示', tF.indexOf('指派別人試卷E2E') < 0);
+    check('F: 指派給全班的試卷會顯示', tF.indexOf('全班指派試卷E2E') >= 0);
+    check('F: 指派給我的試卷會顯示', tF.indexOf('指派給我試卷E2E') >= 0);
+
+    /* ---------- G. 關掉「只顯示指派」→ 所有已發佈試卷都看得到 ---------- */
+    RQ.settings.set({ assignOnly: false });
+    location.hash = '#/';
+    await wait(400);
+    location.hash = '#/student';
+    await wait(3400);
+    var tG = bodyText();
+    check('G: 關閉指派限制後，未指派的試卷也看得到', tG.indexOf('未指派試卷E2E') >= 0);
+    RQ.settings.set({ assignOnly: true });
+
+    /* ---------- H. 老師端試卷管理：發佈按鈕與狀態一致性 ---------- */
+    /* demo-f2-r-t01 存在於 repo（已發佈），但本機記成草稿 →
+       修好後應顯示「已發佈」，不能出現「草稿 + repo」的矛盾狀態 */
+    await RQ.store.quiz.save({
+      id: 'demo-f2-r-t01', title: '中二學期試卷(01)閱讀能力考核', level: '中二',
+      published: false, totalMarks: 60, passages: [],
+      questions: [{ no: 1, id: 'q1', type: 'text', stem: '題目', marks: 3 }]
+    });
+    await RQ.store.quiz.save({
+      id: 'e2e-local-draft', title: '純本機草稿E2E', level: '中二',
+      published: false, totalMarks: 3, passages: [],
+      questions: [{ no: 1, id: 'q1', type: 'text', stem: '題目', marks: 3 }]
+    });
+    RQ.settings.set({ session: { id: 't_e2e', name: '測試老師', role: 'teacher', username: 't' } });
+    location.hash = '#/';
+    await wait(300);
+    location.hash = '#/teacher/quizzes';
+    await wait(3200);
+    var tH = viewText();
+    var r1 = rowText('中二學期試卷(01)閱讀能力考核') || '';
+    var r2 = rowText('純本機草稿E2E') || '';
+    check('H: 老師端試卷管理有「指派後學生才看得到」開關', tH.indexOf('指派後學生才看得到試卷') >= 0, tH.slice(0, 100).replace(/\s+/g, ' '));
+    check('H: repo 上已有的試卷顯示為已發佈（不再矛盾成草稿+repo）',
+      r1.indexOf('已發佈') >= 0 && r1.indexOf('草稿') < 0, r1.replace(/\s+/g, ' ').slice(0, 90));
+    check('H: 已發佈的列有「重新發佈」按鈕', r1.indexOf('重新發佈') >= 0);
+    check('H: 純本機草稿顯示草稿＋學生看不到', r2.indexOf('草稿') >= 0 && r2.indexOf('學生看不到') >= 0, r2.replace(/\s+/g, ' ').slice(0, 90));
+    check('H: 草稿列有「發佈」按鈕', r2.indexOf('發佈') >= 0);
+    check('H: 有指派時出現「追蹤」按鈕', tH.indexOf('追蹤') >= 0);
+    RQ.settings.set({ session: { id: 'stu_e2e', name: '測試生', role: 'student', username: 'e2e' } });
 
     finish({ results: results, errors: window.__ERR__, hash: hashNow });
   } catch (e) {

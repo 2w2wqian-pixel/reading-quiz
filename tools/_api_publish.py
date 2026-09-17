@@ -70,12 +70,14 @@ def main():
     ref = api('GET', '/repos/%s/%s/git/ref/heads/%s' % (OWNER, REPO, BRANCH))
     base = ref['object']['sha']
     print('遠端 main =', base[:8], '（本機 parent =', parent[:8], '）')
-    if base != parent:
-        print('!! 遠端已前進，中止（請先人工處理）'); sys.exit(2)
+    if base != parent and '--force-base' not in sys.argv:
+        print('!! 遠端已前進，中止（請先人工處理；確定要用本機內容覆蓋可用 --force-base）'); sys.exit(2)
 
     tree_entries = []
     for path, content in files:
         if content is None:
+            # 刪除檔案：Git Data API 用 sha=null 表示刪掉這個路徑
+            tree_entries.append({'path': path, 'mode': '100644', 'type': 'blob', 'sha': None})
             continue
         blob = api('POST', '/repos/%s/%s/git/blobs' % (OWNER, REPO),
                    {'content': content, 'encoding': 'base64'})

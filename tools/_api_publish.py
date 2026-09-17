@@ -1,7 +1,8 @@
 # 用 GitHub Git Data API 把本機 HEAD commit 原樣送上遠端
 # （沙箱的 git push 極慢／會卡住，改走 REST API；並重建「完全相同」的 commit，
 #   這樣遠端 sha 會等於本機 sha，兩邊不需要再 fetch 對齊。）
-import base64, json, subprocess, sys, urllib.request, urllib.error
+import base64, json, re, subprocess, sys, urllib.request, urllib.error
+from datetime import datetime, timedelta, timezone
 
 TOKEN = sys.argv[1]
 OWNER, REPO, BRANCH = '2w2wqian-pixel', 'reading-quiz', 'main'
@@ -39,8 +40,22 @@ def main():
     parent = sh('git', 'rev-parse', 'HEAD^').decode().strip()
     raw = sh('git', 'cat-file', 'commit', 'HEAD').decode('utf-8', 'replace')
     message = raw.split('\n\n', 1)[1]
-    author = {'name': '2w2wqian-pixel', 'email': 'teacher@example.com',
-              'date': '2026-09-17T16:17:34+08:00'}
+
+    # 一定要沿用本機 commit 的 author/committer/時間，重建出來的 sha 才會相同
+    def ident(line):
+        m = re.match(r'^(?:author|committer)\s+(.*?)\s+<([^>]*)>\s+(\d+)\s+([+-]\d{4})$', line)
+        if not m:
+            raise SystemExit('無法解析 commit 的 ' + line[:20])
+        name, mail, epoch, tz = m.group(1), m.group(2), int(m.group(3)), m.group(4)
+        sign = 1 if tz[0] == '+' else -1
+        offset = timedelta(hours=int(tz[1:3]), minutes=int(tz[3:5])) * sign
+        date = datetime.fromtimestamp(epoch, timezone(offset)).isoformat()
+        return {'name': name, 'email': mail, 'date': date}
+
+    lines = raw.split('\n')
+    my_author = ident([l for l in lines if l.startswith('author ')][0])
+    my_committer = ident([l for l in lines if l.startswith('committer ')][0])
+    author, committer = my_author, my_committer
     # 變更檔案＝與 parent 的 diff
     diff = sh('git', 'diff', '--name-status', parent, head).decode().strip().split('\n')
     files = []
@@ -73,7 +88,7 @@ def main():
 
     commit = api('POST', '/repos/%s/%s/git/commits' % (OWNER, REPO),
                  {'message': message, 'tree': new_tree['sha'], 'parents': [base],
-                  'author': author, 'committer': author})
+                  'author': author, 'committer': committer})
     print('新 commit =', commit['sha'][:8], '（本機 =', head[:8], '）',
           '相同 ✅' if commit['sha'] == head else '不同（內容相同即可）')
 

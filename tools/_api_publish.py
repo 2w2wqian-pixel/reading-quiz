@@ -56,15 +56,22 @@ def main():
     my_author = ident([l for l in lines if l.startswith('author ')][0])
     my_committer = ident([l for l in lines if l.startswith('committer ')][0])
     author, committer = my_author, my_committer
-    # 變更檔案＝與 parent 的 diff
-    diff = sh('git', 'diff', '--name-status', parent, head).decode().strip().split('\n')
+    # 變更檔案＝與 parent 的 diff。
+    # 用 -z（NUL 分隔）解析：非 ASCII 檔名在一般輸出會被 git 用 C 式八進位轉義
+    # （"data/quizzes/\344\270\255..."），直接拿去 git cat-file 會失敗。
+    parts = [x for x in sh('git', 'diff', '--name-status', '-z', parent, head).decode('utf-8').split('\0') if x]
     files = []
-    for line in diff:
-        parts = line.split('\t')
-        st, path = parts[0], parts[-1]          # R100 old new → 取最後一個
-        if st.startswith('D'):
-            files.append((path, None)); continue
-        files.append((path, read_file(path)))
+    i = 0
+    while i < len(parts):
+        st = parts[i]; i += 1
+        if st[:1] in ('R', 'C'):                 # 改名／複製：old new
+            path = parts[i + 1]; i += 2
+            files.append((path, read_file(path)))
+        elif st[:1] == 'D':                      # 刪除
+            files.append((parts[i], None)); i += 1
+        else:
+            path = parts[i]; i += 1
+            files.append((path, read_file(path)))
     print('變更檔案:', [f[0] for f in files])
 
     ref = api('GET', '/repos/%s/%s/git/ref/heads/%s' % (OWNER, REPO, BRANCH))

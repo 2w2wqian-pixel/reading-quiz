@@ -11,3 +11,8 @@ tools/_e2e_dom.html
 tools/_e2e_index.bak
 tools/_shot*.png
 tools/_e2e_data/
+tools/_pdfprobe_*
+tools/_probe_out.txt
+tools/_trace.txt
+tools/_math.pdf
+tools/_shot*

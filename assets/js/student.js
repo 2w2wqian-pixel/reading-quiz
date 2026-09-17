@@ -701,7 +701,9 @@
         return;
       }
 
-      var GRADES = ['中一', '中二', '中三', '中四', '中五', '中六'];
+      /* 年級排序用（小學 → 中學） */
+      var GRADES = ['小一', '小二', '小三', '小四', '小五', '小六',
+        '中一', '中二', '中三', '中四', '中五', '中六'];
       function isAssigned(m) {
         var a = m.assignment;
         if (!a) return false;
@@ -716,7 +718,8 @@
           done.length ? U.el('span.tag.mint', { text: '已完成 ' + done.length + ' 次' }) : U.el('span.tag', { text: '未作答' })
         ]));
         card.appendChild(U.el('div.tiny.muted.mt1', {
-          text: (m.level ? m.level + '・' : '') + (m.questionCount || 0) + ' 題・' + (m.totalMarks || 0) + ' 分'
+          text: (m.level ? m.level + '・' : '') + (m.subject ? m.subject + '・' : '') +
+            (m.questionCount || 0) + ' 題・' + (m.totalMarks || 0) + ' 分'
         }));
         if (m.assignment && (m.assignment.due || m.assignment.note)) {
           card.appendChild(U.el('div.tiny.mt1', {
@@ -1371,26 +1374,40 @@
       if (g) qs = g.questions;
     }
 
+    /* 發回制：老師「發回」之前，學生看不到參考答案、老師給分與評語，
+       分數也只先顯示選擇題的自動計分（老師批改的部分等發回才揭曉）。 */
+    var released = !!sub.released;
+    var withAnswers = released && !!(sub.release ? sub.release.withAnswers !== false : true);
+    var shownTotal = released ? (s.total || 0) : (s.auto || 0);
+    var shownPct = U.percent(shownTotal, s.max || 0);
+
     var card = U.el('div.score-card');
     card.appendChild(U.el('h2.mb0', { html: U.esc(quiz.title) }));
     if (sub.scope && sub.scope.label) {
       card.appendChild(U.el('div.mt1', {}, [U.el('span.tag.sun', { text: sub.scope.label + '（分段提交）' })]));
     }
     card.appendChild(U.el('div.score-num.mt1', {
-      html: (s.total || 0) + '<small> / ' + (s.max || 0) + ' 分</small>'
+      html: shownTotal + '<small> / ' + (s.max || 0) + ' 分</small>'
     }));
-    card.appendChild(U.el('div.bar.' + U.barClass(pct), {}, [U.el('i', { style: { width: pct + '%' } })]));
+    card.appendChild(U.el('div.bar.' + U.barClass(shownPct), {}, [U.el('i', { style: { width: shownPct + '%' } })]));
     card.appendChild(U.el('div.tiny.muted', {
-      html: '正確率 <b>' + pct + '%</b>　用時 ' + U.fmtDur(sub.durationSec) +
+      html: '正確率 <b>' + shownPct + '%</b>　用時 ' + U.fmtDur(sub.durationSec) +
         '　提交於 ' + U.fmtDate(sub.submittedAt, true)
     }));
-    if (!s.graded) {
+
+    if (released) {
+      card.appendChild(U.el('div.infobox.mt2', {
+        html: '✔ <b>老師已於 ' + U.fmtDate(sub.releasedAt || sub.submittedAt, true) +
+          ' 批改並發回</b>' + (withAnswers ? '　—— 下方每題可看到參考答案、老師給的分數與評語。' : '　—— 老師未附上參考答案。')
+      }));
+    } else if (s.graded) {
       card.appendChild(U.el('div.warnbox.mt2', {
-        text: '選擇題已自動計分；文字題尚待老師批閱，分數會再更新。'
+        html: '老師已批改，<b>尚未發回</b>。等老師按下「發回」後，這裡才會出現分數、評語與參考答案。'
       }));
     } else {
-      card.appendChild(U.el('div.infobox.mt2', {
-        html: '✔ <b>老師已完成批改</b>　—— 下方每題可看到參考答案、老師給的分數與評語。'
+      card.appendChild(U.el('div.warnbox.mt2', {
+        html: '已提交，等待老師批改發回。<br><span class="tiny">目前的分數只是<b>選擇題自動計分</b>；' +
+          '文字題分數、老師評語與參考答案，要等老師發回後才看得到。</span>'
       }));
     }
     view.appendChild(card);
@@ -1426,14 +1443,20 @@
         U.el('span.lbl', { text: '你的作答' }),
         U.el('div', { html: U.nl2br(Forms.answerText(q, ans)) })
       ]));
-      box.appendChild(Forms.reveal(q, ans));
-      if (ans.manualScore != null) {
-        box.appendChild(U.el('div.mt1', {}, [
-          U.el('span.tag.mint', { text: '老師批閱：' + ans.manualScore + ' 分' })
-        ]));
-        if (ans.teacherComment) {
-          box.appendChild(U.el('div.tiny.muted.mt1', { html: '老師評語：' + U.nl2br(ans.teacherComment) }));
+      if (released) {
+        if (withAnswers) box.appendChild(Forms.reveal(q, ans));
+        if (ans.manualScore != null) {
+          box.appendChild(U.el('div.mt1', {}, [
+            U.el('span.tag.mint', { text: '老師批閱：' + ans.manualScore + ' 分' })
+          ]));
+          if (ans.teacherComment) {
+            box.appendChild(U.el('div.tiny.muted.mt1', { html: '老師評語：' + U.nl2br(ans.teacherComment) }));
+          }
         }
+      } else {
+        box.appendChild(U.el('div.tiny.faint.mt1', {
+          text: '（老師發回後，這裡會顯示參考答案與老師評語）'
+        }));
       }
       view.appendChild(box);
     });

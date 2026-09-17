@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<title>PDFPROBE_INIT</title>
+<link rel="stylesheet" href="../assets/css/app.css">
+</head><body>
+<div id="view" style="width:900px"></div>
+<pre id="result">running</pre>
+
+<script src="../assets/js/lib/jszip.min.js"></script>
+<script src="../assets/js/lib/pdf.min.js"></script>
+<script src="../assets/js/core/util.js"></script>
+<script src="../assets/js/core/crypto.js"></script>
+<script src="../assets/js/core/store.js"></script>
+<script src="../assets/js/core/backend.js"></script>
+<script src="../assets/js/core/docx-parser.js"></script>
+<script src="../assets/js/core/pdf-parser.js"></script>
+<script src="../assets/js/ui/highlighter.js"></script>
+<script src="../assets/js/student.js"></script>
+<script>
+window.__ERR__ = [];
+window.addEventListener('error', function (e) { window.__ERR__.push('' + (e.message || e)); });
+window.addEventListener('unhandledrejection', function (e) { window.__ERR__.push('rej: ' + ((e.reason && e.reason.message) || e.reason)); });
+
+function q(now) { return new URLSearchParams(location.search).get(now || 'f'); }
+
+(async function () {
+  var out = [];
+  var file = q('f') || '_pdf.pdf';
+  var mode = q('mode') || 'auto';
+  try {
+    if (!RQ.pdf || !RQ.pdf.available()) throw new Error('pdf.js 未載入');
+    var res = await fetch(file);
+    var buf = await res.arrayBuffer();
+    out.push('file=' + file + ' bytes=' + buf.byteLength);
+
+    var t0 = Date.now();
+    var probe = await RQ.pdf.probe(buf);
+    out.push('probe: mode=' + probe.mode + ' pages=' + probe.pageCount + ' chars=' + probe.textChars + ' (' + (Date.now() - t0) + 'ms)');
+
+    var t1 = Date.now();
+    var r = await RQ.pdf.parse(buf, { fileName: file, forceMode: mode, lang: q('lang') || '' });
+    out.push('parse: mode=' + r.mode + ' title="' + r.title + '" level=' + (r.level || '—') +
+             ' subject=' + (r.subject || '—') + ' q=' + r.questions.length +
+             ' marks=' + r.totalMarks + ' (' + (Date.now() - t1) + 'ms)');
+
+    var withImg = r.questions.filter(function (x) { return x.image; });
+    out.push('image questions=' + withImg.length +
+             (withImg.length ? ' imgBytes~' + Math.round(withImg.map(function (x) { return (x.image || '').length; }).reduce(function (a, b) { return a + b; }, 0) / 1024) + 'KB avg=' + Math.round(withImg[0].image.length / 1024) + 'KB' : ''));
+
+    r.questions.slice(0, 6).forEach(function (x) {
+      out.push('  Q' + x.no + '[' + (x.section || '-') + '] ' + x.type + ' marks=' + x.marks +
+               ' skip=' + (x.skip ? 1 : 0) + ' opts=' + (x.options || []).length +
+               ' quote=' + ((x.quotes || []).length) + ' | ' + String(x.stem || '').slice(0, 70));
+    });
+    out.push('warnings: ' + JSON.stringify(r.warnings));
+
+    /* 渲染每一題，確認顯示層不會炸 */
+    var errs = 0;
+    r.questions.forEach(function (x) {
+      try { document.getElementById('view').appendChild(RQ.forms.input(x, {}, {})); }
+      catch (e) { errs++; out.push('  RENDER FAIL Q' + x.no + ': ' + e.message); }
+    });
+    out.push('render errors=' + errs);
+    out.push('view imgs=' + document.querySelectorAll('#view img').length +
+             ' textareas=' + document.querySelectorAll('#view textarea').length +
+             ' inputs=' + document.querySelectorAll('#view input').length);
+    out.push('jsErrors=' + JSON.stringify(window.__ERR__));
+    document.title = 'PDFPROBE OK mode=' + r.mode + ' q=' + r.questions.length + ' err=' + errs;
+  } catch (e) {
+    out.push('FATAL: ' + (e && e.message ? e.message : e));
+    document.title = 'PDFPROBE FAIL';
+  }
+  document.getElementById('result').textContent = out.join('\n');
+  /* 把結果打成 beacon 回 server 的 access log：
+     --virtual-time-budget 會讓虛擬時間跑得比 worker 的實際 I/O 快，
+     只靠 --dump-dom 常常在完成前就被截斷（PDF 尤其明顯）。 */
+  try { new Image().src = '/__pdf?r=' + encodeURIComponent(out.join(' ~ ')); } catch (e) {}
+})();
+</script>
+</body></html>

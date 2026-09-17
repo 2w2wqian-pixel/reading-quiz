@@ -16,14 +16,41 @@
   var Teacher = {};
   var state = { tab: 'upload', quizId: null };
 
-  /* ---------- 年級分類（中一～中六） ---------- */
-  var GRADES = ['中一', '中二', '中三', '中四', '中五', '中六'];
+  /* ---------- 年級分類（小一～小六、中一～中六） ---------- */
+  var PRIMARY_GRADES = ['小一', '小二', '小三', '小四', '小五', '小六'];
+  var SECONDARY_GRADES = ['中一', '中二', '中三', '中四', '中五', '中六'];
+  var GRADES = PRIMARY_GRADES.concat(SECONDARY_GRADES);
+
   function gradeSelect(value, attrs) {
     var sel = U.el('select.input', attrs || {});
     sel.appendChild(U.el('option', { value: '', text: '（未分類）' }));
-    GRADES.forEach(function (g) { sel.appendChild(U.el('option', { value: g, text: g })); });
+    [['小學', PRIMARY_GRADES], ['中學', SECONDARY_GRADES]].forEach(function (grp) {
+      var og = U.el('optgroup', { label: grp[0] });
+      grp[1].forEach(function (g) { og.appendChild(U.el('option', { value: g, text: g })); });
+      sel.appendChild(og);
+    });
     sel.value = value || '';
+    if (String(value || '') && sel.value !== value) sel.value = '';   /* 認不得的年級 → 未分類 */
     return sel;
+  }
+
+  /* ---------- 科目分類 ---------- */
+  var SUBJECTS = ['中文', '英文', '數學'];
+  function subjectSelect(value, attrs) {
+    var sel = U.el('select.input', attrs || {});
+    sel.appendChild(U.el('option', { value: '', text: '（未分類）' }));
+    SUBJECTS.forEach(function (x) { sel.appendChild(U.el('option', { value: x, text: x })); });
+    sel.value = value || '';
+    if (String(value || '') && sel.value !== value) sel.value = '';
+    return sel;
+  }
+
+  /* 年級＋科目標籤（清單與卡片共用） */
+  function metaTags(m) {
+    var tags = [];
+    if (m && m.level) tags.push(m.level);
+    if (m && m.subject) tags.push(m.subject);
+    return tags.join('・');
   }
 
   /* 某份作業是否指派給某學生 */
@@ -300,10 +327,12 @@
      ============================================================ */
   Teacher.upload = function (view) {
     var card = U.el('div.card');
-    card.appendChild(U.el('h2', { text: '上傳 Word 試卷（.docx）' }));
+    card.appendChild(U.el('h2', { text: '上傳試卷（.docx／.pdf）' }));
     card.appendChild(U.el('p.tiny.muted', {
-      html: '程式會在<b>你的瀏覽器裡</b>直接解讀 .docx，自動拆成「文章／題目／選項／答案與解析」。<br>' +
-        '若 Word 檔同時含「學生版＋教師版」（如啟思試卷），答案會自動帶入；也可以分開上傳兩個檔。'
+      html: '程式會在<b>你的瀏覽器裡</b>直接解讀檔案，自動拆成「文章／題目／選項／答案與解析」。<br>' +
+        '<b>Word（.docx）</b>：若同一檔含「學生版＋教師版」（如啟思試卷），答案會自動帶入；也可分開上傳兩個檔。<br>' +
+        '<b>PDF</b>：電子 PDF 直接抽文字出題；<b>掃描／影印的 PDF 沒有文字層</b>，' +
+        '會自動改成「每頁一題、顯示原頁畫面」，學生在原頁下方作答。'
     }));
 
     var opt = { answerColor: 'FF0000', studentFile: null, teacherFile: null };
@@ -317,14 +346,18 @@
     adv.appendChild(U.el('span.tiny.faint', { text: '（教師版答案文字的顏色，預設紅色 FF0000）' }));
     card.appendChild(adv);
 
-    /* 年級分類 */
-    var gradeRow = U.el('div.row.mt2', {});
-    gradeRow.appendChild(U.el('label.tiny.muted', { text: '年級分類：' }));
+    /* 年級分類（小學／中學）＋ 科目分類 */
+    var metaRow = U.el('div.row.mt2', { style: { flexWrap: 'wrap', gap: '8px' } });
+    metaRow.appendChild(U.el('label.tiny.muted', { text: '年級：' }));
     var gSel = gradeSelect('', { style: { maxWidth: '150px', flex: '0 0 auto' } });
     gSel.addEventListener('change', function () { opt.level = gSel.value; });
-    gradeRow.appendChild(gSel);
-    gradeRow.appendChild(U.el('span.tiny.faint', { text: '（上傳後仍可修改；學生首頁會依年級分組）' }));
-    card.appendChild(gradeRow);
+    metaRow.appendChild(gSel);
+    metaRow.appendChild(U.el('label.tiny.muted', { text: '科目：' }));
+    var sSel = subjectSelect('', { style: { maxWidth: '130px', flex: '0 0 auto' } });
+    sSel.addEventListener('change', function () { opt.subject = sSel.value; });
+    metaRow.appendChild(sSel);
+    metaRow.appendChild(U.el('span.tiny.faint', { text: '（可留空，選檔後會自動判斷；學生首頁會依年級分組）' }));
+    card.appendChild(metaRow);
 
     /* 發佈選項 */
     var pubChk = U.el('input', { type: 'checkbox' });
@@ -340,6 +373,10 @@
     var dropS = dropZone('學生卷（題目卷）', function (f) {
       opt.studentFile = f;
       U.$('.drop-name', dropS).textContent = f.name;
+      /* 自動判斷年級／科目（老師手動選過的就不覆蓋） */
+      if (!gSel.value) { var g = U.guessLevel(f.name); if (g) { gSel.value = g; opt.level = g; } }
+      if (!sSel.value) { var sb = U.guessSubject(f.name); if (sb) { sSel.value = sb; opt.subject = sb; } }
+      if (/\.pdf$/i.test(f.name)) U.toast('PDF 會在解析時自動判斷是電子檔還是掃描檔', 'ok', 3500);
     });
     card.appendChild(U.el('label.tiny.muted.mt2', { text: '學生卷' }));
     card.appendChild(dropS);
@@ -348,8 +385,8 @@
     var dropT = dropZone('教師卷／答案卷（可留空：若學生卷已內含教師版）', function (f) {
       opt.teacherFile = f;
       U.$('.drop-name', dropT).textContent = f.name;
-    });
-    card.appendChild(U.el('label.tiny.muted.mt2', { text: '教師卷（選填）' }));
+    }, true);
+    card.appendChild(U.el('label.tiny.muted.mt2', { text: '教師卷（選填，Word 用；PDF 一般已含答案請留空）' }));
     card.appendChild(dropT);
 
     var btnRow = U.el('div.row.mt2', {}, [
@@ -383,24 +420,34 @@
           '<b>R5</b>　文章＝「閱讀能力考材」到「－完－」之間，以「第一篇／第二篇」分段，長度 ≥ 25 字視為正文。',
           '<b>R6</b>　【整合】【引申】等能力標記會從題幹抽出來，另存為標籤。',
           '<b>R7</b>　表格題逐一比對學生版／教師版儲存格，產生子題；教師版有紅色勾選記號者，答案取該欄標題。',
-          '<b>R8</b>　「答案分析：」之後的文字視為解析。'
+          '<b>R8</b>　「答案分析：」之後的文字視為解析。',
+          '<b>R9（PDF）</b>　有文字層的 PDF：抽出文字行後<b>沿用上面同一套出題規則</b>；' +
+            'PDF 常把 A/B/C/D 選項排在同一行，程式會先切成獨立選項。',
+          '<b>R10（PDF）</b>　沒有文字層（掃描／影印檔，例如影印的數學卷）：' +
+            '<b>無法無中生有文字</b>，改為每頁轉成圖片、每頁一題，學生在原頁下方作答；' +
+            '老師可在編輯頁「附加截圖」把某頁的圖帶到指定題目。'
         ].map(function (x) { return '<div style="padding:2px 0">' + x + '</div>'; }).join('')
       })
     ]));
   };
 
-  function dropZone(label, onFile) {
+  function dropZone(label, onFile, wordOnly) {
+    var ok = function (n) { return wordOnly ? /\.docx$/i.test(n) : (/\.docx$/i.test(n) || /\.pdf$/i.test(n)); };
+    var tip = wordOnly ? '點擊選擇，或把 .docx 拖到這裡' : '點擊選擇，或把 .docx／.pdf 拖到這裡';
     var z = U.el('div.drop', {}, [
       U.el('div.big', { text: '📄' }),
       U.el('b', { text: label }),
-      U.el('small', { text: '點擊選擇，或把 .docx 拖到這裡' }),
+      U.el('small', { text: tip }),
       U.el('div.drop-name.tiny', { style: { marginTop: '6px', color: 'var(--pink-deep)' } })
     ]);
     z.addEventListener('click', function () {
-      U.pickFile('.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document', function (f) {
-        if (!/\.docx$/i.test(f.name)) { U.toast('目前只支援 .docx（舊的 .doc 請先另存為 .docx）', 'bad'); return; }
-        onFile(f);
-      });
+      U.pickFile(wordOnly
+        ? '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        : '.docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        function (f) {
+          if (!ok(f.name)) { U.toast(wordOnly ? '教師卷請用 .docx（舊的 .doc 請先另存為 .docx）' : '只支援 .docx 或 .pdf', 'bad'); return; }
+          onFile(f);
+        });
     });
     ['dragenter', 'dragover'].forEach(function (ev) {
       z.addEventListener(ev, function (e) { e.preventDefault(); z.classList.add('over'); });
@@ -410,29 +457,48 @@
     });
     z.addEventListener('drop', function (e) {
       var f = e.dataTransfer.files[0];
-      if (f && /\.docx$/i.test(f.name)) onFile(f);
+      if (f && ok(f.name)) onFile(f);
+      else if (f) U.toast(wordOnly ? '教師卷請用 .docx' : '只支援 .docx 或 .pdf', 'bad');
     });
     return z;
   }
 
   function runParse(view, opt) {
+    var isPdf = /\.pdf$/i.test(opt.studentFile.name);
     var card = U.el('div.card', {}, [
-      U.el('div.center', {}, [U.el('b', { text: '解析中…' }), U.el('div.tiny.muted', { text: '視試卷長度約需 1–5 秒' })])
+      U.el('div.center', {}, [
+        U.el('b', { text: '解析中…' }),
+        U.el('div.tiny.muted', {
+          text: isPdf
+            ? 'PDF 需要先判斷有沒有文字層；掃描檔還要逐頁轉圖，約需數秒到一分鐘'
+            : '視試卷長度約需 1–5 秒'
+        })
+      ])
     ]);
     view.appendChild(card);
 
-    var p = opt.teacherFile
-      ? RQ.docx.parsePair(opt.studentFile, opt.teacherFile, {
+    var p;
+    if (isPdf) {
+      if (opt.teacherFile) {
+        U.toast('PDF 解析不使用教師卷（PDF 通常已含答案頁，教師卷只支援 Word）', 'bad', 4000);
+      }
+      p = RQ.pdf.parse(opt.studentFile, { fileName: opt.studentFile.name, lang: '' });
+    } else if (opt.teacherFile) {
+      p = RQ.docx.parsePair(opt.studentFile, opt.teacherFile, {
         answerColor: opt.answerColor,
         studentName: opt.studentFile.name, teacherName: opt.teacherFile.name
-      })
-      : RQ.docx.parse(opt.studentFile, { answerColor: opt.answerColor, fileName: opt.studentFile.name });
+      });
+    } else {
+      p = RQ.docx.parse(opt.studentFile, { answerColor: opt.answerColor, fileName: opt.studentFile.name });
+    }
 
     p.then(function (res) {
       var quiz = {
         id: U.slug(res.title) + '-' + Date.now().toString(36).slice(-4),
         title: res.title,
         level: opt.level || res.level || '',
+        subject: opt.subject || res.subject || '',
+        format: res.mode === 'image' ? 'pdf-image' : (res.mode === 'text' ? 'pdf-text' : 'docx'),
         source: res.source || '',
         createdAt: U.nowISO(),
         updatedAt: U.nowISO(),
@@ -444,8 +510,11 @@
         stats: res.stats
       };
       return Store.quiz.save(quiz).then(function () {
+        var whatPdf = res.mode === 'image' ? '（掃描檔：每頁一題、顯示原頁畫面）' : '';
         if (!opt.autoPublish) {
-          U.toast('解析完成：' + res.questions.length + ' 題／' + res.passages.length + ' 篇文章（已存為草稿，請按「發佈到 GitHub」）', 'ok', 4500);
+          U.toast('解析完成：' + res.questions.length + ' 題' +
+            (res.mode === 'image' ? '' : '／' + res.passages.length + ' 篇文章') + whatPdf +
+            '（已存為草稿，請按「發佈」）', 'ok', 4500);
           location.hash = '#/edit/' + quiz.id;
           return null;
         }
@@ -482,13 +551,15 @@
     var top = U.el('div.card');
     var tInp = U.el('input.input', { value: quiz.title || '' });
     var lInp = gradeSelect(quiz.level || '', { style: { maxWidth: '160px' } });
+    var subSel = subjectSelect(quiz.subject || '', { style: { maxWidth: '140px' } });
     top.appendChild(U.el('div.row.between', {}, [
       U.el('h2.mb0', { text: '微調試卷內容' }),
       U.el('span.tag' + (quiz.published ? '.mint' : '.gray'), { text: quiz.published ? '已發佈' : '尚未發佈' })
     ]));
     top.appendChild(U.el('div.inline-fields.mt2', {}, [
       U.el('div', {}, [U.el('label.tiny.muted', { text: '試卷名稱' }), tInp]),
-      U.el('div', { style: { maxWidth: '180px' } }, [U.el('label.tiny.muted', { text: '年級分類' }), lInp])
+      U.el('div', { style: { maxWidth: '180px' } }, [U.el('label.tiny.muted', { text: '年級分類' }), lInp]),
+      U.el('div', { style: { maxWidth: '150px' } }, [U.el('label.tiny.muted', { text: '科目' }), subSel])
     ]));
 
     /* 作業指派狀態 */
@@ -576,12 +647,14 @@
     function save() {
       quiz.title = U.trim(tInp.value) || quiz.title;
       quiz.level = U.trim(lInp.value);
+      quiz.subject = subSel.value;
       quiz.updatedAt = U.nowISO();
       Store.quiz.save(quiz).then(function () { U.toast('已儲存', 'ok'); });
     }
     function assign() {
       quiz.title = U.trim(tInp.value) || quiz.title;
       quiz.level = U.trim(lInp.value);
+      quiz.subject = subSel.value;
       assignDialog(quiz, function () { Store.quiz.get(quiz.id).then(function (q) { renderEditor(view, q || quiz); }); });
     }
     function preview() {
@@ -598,6 +671,8 @@
     }
     function publish() {
       quiz.title = U.trim(tInp.value) || quiz.title;
+      quiz.level = U.trim(lInp.value);
+      quiz.subject = subSel.value;
       /* 注意：published 只可在「發佈成功」後才設為 true（Backend.publishQuiz 內部會設），
          否則發佈失敗時會被誤標成「已發佈」，之後按儲存就會把假狀態存起來。 */
       Backend.publishQuiz(quiz).then(function () {
@@ -890,12 +965,12 @@
       ]));
 
       var tbl = U.el('table.tbl');
-      tbl.innerHTML = '<thead><tr><th>試卷</th><th>年級</th><th>題數</th><th>分數</th><th>狀態</th><th>作業</th><th>更新</th><th>操作</th></tr></thead>';
+      tbl.innerHTML = '<thead><tr><th>試卷</th><th>年級／科目</th><th>題數</th><th>分數</th><th>狀態</th><th>作業</th><th>更新</th><th>操作</th></tr></thead>';
       var tb = U.el('tbody');
       list.forEach(function (m) {
         var tr = U.el('tr');
         tr.appendChild(U.el('td', { html: U.esc(m.title) }));
-        tr.appendChild(U.el('td', { text: m.level || '—' }));
+        tr.appendChild(U.el('td', { text: metaTags(m) || '—' }));
         tr.appendChild(U.el('td', { text: m.questionCount || 0 }));
         tr.appendChild(U.el('td', { text: m.totalMarks || 0 }));
         tr.appendChild(U.el('td', {}, [
@@ -1014,6 +1089,26 @@
         });
       }
 
+      /* 一次把「已批改但尚未發回」的作答全部發回 */
+      function releaseAll(quizId) {
+        var targets = (quizId ? subs.filter(function (s) { return s.quizId === quizId; }) : subs)
+          .filter(function (s) { return (s.score && s.score.graded) && !s.released; });
+        if (!targets.length) {
+          U.toast('沒有「已批改但尚未發回」的作答（未批改的不會自動發回）', 'bad', 4000);
+          return;
+        }
+        U.confirm('要把這 ' + targets.length + ' 份已批改的作答發回給學生嗎？\n發回後學生會看到分數、評語與參考答案。', function () {
+          Promise.all(targets.map(function (st) {
+            st.released = true; st.releasedAt = U.nowISO();
+            st.release = { withAnswers: true, at: U.nowISO() };
+            return Store.submission.save(st).then(function () { return Backend.saveSubmission(st); });
+          })).then(function () {
+            U.toast('已發回 ' + targets.length + ' 份', 'ok', 4000);
+            return reload(true);
+          }).catch(function (e) { U.toast('發回失敗：' + ((e && e.message) || e), 'bad'); });
+        });
+      }
+
       function draw(selId) {
         box.innerHTML = '';
         var header = U.el('div.card');
@@ -1048,7 +1143,8 @@
           U.el('div.row', {}, [
             refreshBtn,
             U.el('button.btn.sm', { text: '匯出 CSV', onclick: function () { exportCSV(sel.value, subs); } }),
-            U.el('button.btn.sm', { text: '匯出 JSON', onclick: function () { exportJSON(sel.value, subs); } })
+            U.el('button.btn.sm', { text: '匯出 JSON', onclick: function () { exportJSON(sel.value, subs); } }),
+            U.el('button.btn.sm.lav', { text: '發回全部', onclick: function () { releaseAll(sel.value); } })
           ])
         ]));
         header.appendChild(U.el('div.row.between.mt2', {}, [
@@ -1099,7 +1195,7 @@
 
         /* 明細表 */
         var tbl = U.el('table.tbl');
-        tbl.innerHTML = '<thead><tr><th>學生</th><th>提交時間</th><th>得分</th><th>正確率</th><th>用時</th><th>標記</th><th>生詞</th><th>操作</th></tr></thead>';
+        tbl.innerHTML = '<thead><tr><th>學生</th><th>提交時間</th><th>得分</th><th>正確率</th><th>用時</th><th>標記</th><th>生詞</th><th>發回</th><th>操作</th></tr></thead>';
         var tb = U.el('tbody');
         list.forEach(function (s) {
           var tr = U.el('tr');
@@ -1118,6 +1214,24 @@
               ? '<span class="tag pink">' + (s.vocab || []).map(function (v) { return U.esc(v.word); }).join('、') + '</span>'
               : '—'
           }));
+          tr.appendChild(U.el('td', {}, [
+            s.released
+              ? U.el('span.tag.mint', { text: '已發回' })
+              : U.el('button.btn.xs.lav', {
+                text: '發回', onclick: function () {
+                  var graded = !!(s.score && s.score.graded);
+                  var go = function () {
+                    s.released = true; s.releasedAt = U.nowISO();
+                    s.release = { withAnswers: true, at: U.nowISO() };
+                    Store.submission.save(s).then(function () { return Backend.saveSubmission(s); })
+                      .then(function () { U.toast('已發回給 ' + (s.studentName || s.username || '學生'), 'ok'); return reload(true); })
+                      .catch(function (e) { U.toast('發回失敗：' + ((e && e.message) || e), 'bad'); });
+                  };
+                  if (graded) go();
+                  else U.confirm('這份還沒批改完成，確定要直接發回嗎？（學生會看到目前的分數與答案）', go);
+                }
+              })
+          ]));
           tr.appendChild(U.el('td', {}, [
             U.el('button.btn.xs.primary', { text: '查看', onclick: function () { detail(s, quiz); } })
           ]));
@@ -1190,6 +1304,59 @@
       d.appendChild(U.el('div.warnbox.mt2', { text: '找不到對應試卷，僅顯示原始作答內容。' }));
     }
 
+    /* 發回給學生（發回前學生看不到答案／老師給分／評語） */
+    var relCard = U.el('div.card.tinted.mt2');
+    var relChk = U.el('input', { type: 'checkbox' });
+    relChk.checked = !!(sub.release ? sub.release.withAnswers !== false : true);
+    var relState = U.el('div.tiny.mt1', {});
+    function paintRel() {
+      relState.innerHTML = sub.released
+        ? '<span class="tag mint">已發回</span> ' + U.fmtDate(sub.releasedAt || sub.submittedAt, true) +
+          (sub.release && sub.release.withAnswers ? '　（已附參考答案）' : '　（未附答案）')
+        : '<span class="tag gray">尚未發回</span>　學生目前只看到選擇題自動計分，看不到答案與評語';
+    }
+    relCard.appendChild(U.el('h3', { text: '發回給學生' }));
+    relCard.appendChild(U.el('div.tiny.muted', {
+      html: '「發回」之前，學生<b>看不到</b>參考答案、老師給的分數與評語；按下發回後才會一次看到。'
+    }));
+    relCard.appendChild(relState);
+    relCard.appendChild(U.el('label.check.mt2', {}, [
+      relChk, U.el('span', { text: '發回時附上試卷所有參考答案與解析' })
+    ]));
+    relCard.appendChild(U.el('div.row.mt2', {}, [
+      U.el('button.btn.sm.primary', { text: '儲存並發回', onclick: function () { doRelease(true); } }),
+      U.el('button.btn.sm', { text: '取消發回', onclick: function () { doRelease(false); } })
+    ]));
+    d.appendChild(relCard);
+
+    /* 畫面上的給分輸入框：發回時一起寫回去，避免老師改了卻沒按「儲存給分」 */
+    var markRows = [];
+    function doRelease(v) {
+      markRows.forEach(function (r) {
+        r.ans.manualScore = r.mk.value === '' ? null : (parseFloat(r.mk.value) || 0);
+        r.ans.teacherComment = U.trim(r.cm.value);
+        sub.answers[r.q.id] = r.ans;
+      });
+      recalc(sub, quiz);
+      if (v) {
+        sub.released = true;
+        sub.releasedAt = U.nowISO();
+        sub.release = { withAnswers: !!relChk.checked, at: U.nowISO() };
+      } else {
+        sub.released = false;
+        sub.releasedAt = null;
+        sub.release = null;
+      }
+      Store.submission.save(sub).then(function () {
+        return Backend.saveSubmission(sub);
+      }).then(function () {
+        U.toast(v ? '已發回給學生，學生重新載入即可看到' : '已取消發回', 'ok', 4000);
+        paintRel();
+      }).catch(function (e) {
+        U.toast('發回失敗：' + ((e && e.message) || e), 'bad');
+      });
+    }
+
     (quiz ? quiz.questions : []).forEach(function (q, i) {
       var box = U.el('div.q');
       box.appendChild(U.el('div.q-head', {}, [
@@ -1206,6 +1373,7 @@
       /* 手動給分 */
       var mk = U.el('input.input', { type: 'number', value: (ans.manualScore != null ? ans.manualScore : ''), placeholder: '0 ~ ' + (q.marks || 0), style: { maxWidth: '110px' } });
       var cm = U.el('input.input', { value: ans.teacherComment || '', placeholder: '評語（學生會看到）' });
+      markRows.push({ q: q, ans: ans, mk: mk, cm: cm });
       var saveBtn = U.el('button.btn.xs.primary', {
         text: '儲存給分', onclick: function () {
           ans.manualScore = mk.value === '' ? null : (parseFloat(mk.value) || 0);
@@ -1214,7 +1382,7 @@
           recalc(sub, quiz);
           Store.submission.save(sub).then(function () {
             Backend.saveSubmission(sub);
-            U.toast('已儲存', 'ok');
+            U.toast('已儲存' + (sub.released ? '' : '（學生還看不到，記得按「儲存並發回」）'), 'ok', 3000);
           });
         }
       });

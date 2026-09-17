@@ -195,6 +195,34 @@ window.RQ = window.RQ || {};
     });
   };
 
+  /* ---------- 檔名／標題推測（年級、科目） ---------- */
+  var CND = '一二三四五六';
+
+  /** 從檔名或標題猜年級：小一～小六／中一～中六，猜不到回 '' 。支援 P.5＝小五、F.2／S2＝中二 */
+  U.guessLevel = function (name) {
+    var s = String(name || '');
+    var m = s.match(/小\s*([一二三四五六])/);
+    if (m) return '小' + m[1];
+    m = s.match(/中\s*([一二三四五六])/);
+    if (m) return '中' + m[1];
+    m = s.match(/(?:^|[^A-Za-z])P\.?\s*([1-6])(?:[^0-9]|$)/i);       /* P.5 / P5 */
+    if (m) return '小' + CND.charAt(+m[1] - 1);
+    m = s.match(/(?:^|[^A-Za-z])(?:F|S|Form|Secondary)\.?\s*([1-6])(?:[^0-9]|$)/i);  /* F.2 / S2 */
+    if (m) return '中' + CND.charAt(+m[1] - 1);
+    m = s.match(/(?:^|[^A-Za-z])(?:Primary|Grade)\s*([1-6])(?:[^0-9]|$)/i);
+    if (m) return '小' + CND.charAt(+m[1] - 1);
+    return '';
+  };
+
+  /** 從檔名或標題猜科目：中文／英文／數學，猜不到回 '' */
+  U.guessSubject = function (name) {
+    var s = String(name || '');
+    if (/數學|數感|math|arithmetic|geometry|algebra/i.test(s)) return '數學';
+    if (/英文|english|reading|grammar|comprehension|language\s*arts|listening|writing/i.test(s)) return '英文';
+    if (/中文|chinese|語文|閱讀|文言|作文|聆聽|說話/.test(s)) return '中文';
+    return '';
+  };
+
   /* ---------- 其他 ---------- */
   U.clone = function (o) { return o == null ? o : JSON.parse(JSON.stringify(o)); };
 

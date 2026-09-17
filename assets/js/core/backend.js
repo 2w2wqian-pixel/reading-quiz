@@ -413,6 +413,7 @@
   function metaOf(q, src) {
     return {
       id: q.id, title: q.title, level: q.level || '', source: q.source || '',
+      subject: q.subject || '', format: q.format || '',
       questionCount: (q.questions || []).length,
       totalMarks: q.totalMarks || 0,
       passageCount: (q.passages || []).length,

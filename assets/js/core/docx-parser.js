@@ -88,6 +88,37 @@
     if (/^\d{1,3}$/.test(t)) return false;                           // 純頁碼
     return U.trim(t).length >= 2;
   }
+  /* 同一行內的多個選項標記（PDF 常見）："A. x　B. y" */
+  var RE_OPT_MARK = /(?:^|[\s\u3000])([A-H])\s*[.、)．:：]\s+/g;
+
+  /**
+   * 把「同一行排了多個選項」的行切成多段（PDF 常見：「A. 只有　B. 沒有　C. 都有」）。
+   * docx 是一段一個選項，解析器只認獨立成段的選項，所以 PDF 需要先切開，
+   * 才能吃到與 docx 完全相同的選項收集邏輯。
+   * 只有「A、B、C…連續且從 A 開始」才切，避免把 E.、I. 之類的縮寫誤判成選項。
+   */
+  function splitOptionLine(line) {
+    var t = String(line == null ? '' : line);
+    var marks = [], m;
+    RE_OPT_MARK.lastIndex = 0;
+    while ((m = RE_OPT_MARK.exec(t))) {
+      var lead = /^[\s\u3000]/.test(m[0]) ? 1 : 0;
+      marks.push({ at: m.index + lead, letter: m[1] });
+      RE_OPT_MARK.lastIndex = m.index + lead + 1;
+    }
+    if (marks.length < 2) return [t];
+    for (var i = 0; i < marks.length; i++) {
+      if (marks[i].letter !== String.fromCharCode(65 + i)) return [t];
+    }
+    var out = [];
+    if (marks[0].at > 0) out.push(t.slice(0, marks[0].at));
+    for (var k = 0; k < marks.length; k++) {
+      var end = (k + 1 < marks.length) ? marks[k + 1].at : t.length;
+      out.push(t.slice(marks[k].at, end));
+    }
+    return out;
+  }
+
   /* 英文選項段落：A. / B) / C、 … */
   function isEnglishOption(b) {
     if (b.kind !== 'p') return false;
@@ -934,6 +965,37 @@
         .then(function (xml) { return Docx.parseXML(xml, color, fileName); });
     },
 
+    /**
+     * 把「純文字行」轉成解析器內部使用的 block，讓 PDF／純文字來源
+     * 也能吃到完全一樣的題號偵測、選項抽取、引文擷取與分卷邏輯。
+     * @param {Array<string>} lines
+     * @param {Object} opt {red:false}
+     */
+    splitOptionLine: splitOptionLine,
+
+    blocksFromLines: function (lines, opt) {
+      opt = opt || {};
+      var out = [];
+      (lines || []).forEach(function (line) {
+        splitOptionLine(line).forEach(function (one) {
+          var t = U.trim(one);
+          if (t === '') {
+            out.push({ kind: 'p', node: null, tokens: [], text: '', html: '', red: false, letters: [], options: [] });
+            return;
+          }
+          var tokens = [{ type: 'text', v: t, red: !!opt.red }];
+          out.push({
+            kind: 'p', node: null, tokens: tokens,
+            text: t, html: U.esc(t),
+            red: !!opt.red,
+            letters: tokensLetters(tokens),
+            options: extractOptions(tokens)
+          });
+        });
+      });
+      return out;
+    },
+
     parseXML: function (xml, color, fileName) {
       var doc = new DOMParser().parseFromString(xml, 'application/xml');
       var perr = doc.getElementsByTagName('parsererror');
@@ -944,7 +1006,20 @@
       if (!bodyEl) throw new Error('找不到文件主體');
 
       var built = buildBlocks(bodyEl, color);
-      var top = built.top, paras = built.paras;
+      return Docx.fromBlocks(built.top, built.paras, { answerColor: color, fileName: fileName });
+    },
+
+    /**
+     * 把「已建構好的 blocks」變成試卷 —— 供 PDF 等非 docx 來源重用同一套出題邏輯。
+     * @param {Array} top   區塊陣列 [{kind:'p'|'tr', text, html, tokens, cells,…}]
+     * @param {Array} paras 段落節點（PDF 沒有可傳 []）
+     * @param {Object} opt  {fileName, answerColor, lang, mode}
+     */
+    fromBlocks: function (top, paras, opt) {
+      opt = opt || {};
+      var color = opt.answerColor || 'FF0000';
+      var fileName = opt.fileName || '';
+      top = top || []; paras = paras || [];
       var warnings = [];
 
       /* ---- 標題 ---- */
@@ -960,10 +1035,10 @@
       /* ---- 區段定位 ---- */
       var isShort = function (b) { return b.kind === 'p' && b.text.length <= 20; };
       var teacherIdx = findIndex(top, function (b) { return /教\s*師\s*版/.test(b.text); });
-      var isEnglish = top.some(function (b) {
-        return /Suggested Answers|Reading Text|END OF READING TEXT|END OF QUESTIONS/i.test(b.text);
+      var isEnglish = opt.lang ? (opt.lang === 'en') : top.some(function (b) {
+        return /Suggested Answers|Reading Text|END OF READING TEXT|END OF QUESTIONS/i.test(b.text || '');
       });
-      var lang = isEnglish ? 'en' : 'zh';
+      var lang = opt.lang || (isEnglish ? 'en' : 'zh');
 
       var matIdx = findIndex(top, function (b) {
         return isShort(b) && /閱\s*讀\s*能\s*力\s*考\s*材/.test(b.text);

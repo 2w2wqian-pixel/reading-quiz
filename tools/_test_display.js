@@ -91,8 +91,9 @@ function countNodes(n,tag){var c=(n.tagName===tag?1:0);(n.children||[]).forEach(
         var at=Forms.answerText(q,{});
         var rev=Forms.reveal(q,{});
         console.log('#'+q.no,'['+q.section+']',q.type,'tt='+(q.tableType||''),
+          'skip='+(q.skip?1:0),
           '| inputs='+inputs,'selects='+selects,'ta='+textareas,'tables='+tables,
-          'quotes='+(qb?qb.children.length:0));
+          'quotes='+(qb?qb.children.length:0),'qhtml='+((q.quotesHtml||[]).length));
       }catch(e){console.log('#'+q.no,'ERROR',e.message,'\n',e.stack.split('\n').slice(0,3).join('\n'));}
     });
   }

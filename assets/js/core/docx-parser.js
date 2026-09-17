@@ -100,6 +100,22 @@
     var joined = (headerCells || []).join(' ');
     return /正確|錯誤|無從判斷/i.test(joined) || /true|false|not given/i.test(joined);
   }
+  /* 段落劃分／概括題（如「本文共有7個段落，分成四個部分，試指出各部分由哪些段落組成」）
+     → 不適合線上作答，解析後標記略過 */
+  function isSectionSplitQ(q) {
+    var s = String(q.stem || '');
+    if (/個段落/.test(s) && (/分成/.test(s) || /哪些段落組成/.test(s) || /各部分/.test(s))) return true;
+    var rows = (q.table && q.table.rows) || [];
+    if (!rows.length) return false;
+    var head = rows[0].map(function (c) { return U.trim((c && (c.text || c.visible)) || ''); }).join('');
+    var hasPara = rows.some(function (r) {
+      return (r || []).some(function (c) {
+        var t = U.trim((c && (c.text || c.visible)) || '');
+        return /第[\s\u3000]{1,4}段/.test(t) || /^第\s*段$/.test(t);
+      });
+    });
+    return /部分/.test(head) && /段落/.test(head) && hasPara;
+  }
 
   /* 英文閱讀文章：介於 "Reading Text" 與 "END OF READING TEXT" 之間的
      段落與表格（表格取其最長、非頁碼那一格） */
@@ -154,31 +170,77 @@
     return v === String(answerColor || 'FF0000').toUpperCase();
   }
 
+  /* 讀取 run 的格式：紅字（答案）／粗體／底線（保留原卷樣式用） */
+  function runFmt(r, answerColor) {
+    var f = { red: false, bold: false, underline: false };
+    var pr = childByLocal(r, 'rPr');
+    if (pr) {
+      var col = childByLocal(pr, 'color');
+      if (col) {
+        var v = (attr(col, 'w:val') || attr(col, 'val') || '').toUpperCase();
+        if (v && v !== 'AUTO' && v !== '000000' && v === String(answerColor || 'FF0000').toUpperCase()) f.red = true;
+      }
+      var b = childByLocal(pr, 'b');
+      if (b) {
+        var bv = (attr(b, 'w:val') || attr(b, 'val') || '').toLowerCase();
+        if (bv !== '0' && bv !== 'false') f.bold = true;
+      }
+      var u = childByLocal(pr, 'u');
+      if (u) {
+        var uv = (attr(u, 'w:val') || attr(u, 'val') || 'single');
+        if (uv !== 'none') f.underline = true;
+      }
+    }
+    return f;
+  }
+
   /** 收集 run 內的 tokens */
-  function runTokens(r, tokens, red) {
+  function runTokens(r, tokens, fmt) {
+    fmt = fmt || {};
     for (var i = 0; i < r.childNodes.length; i++) {
       var c = r.childNodes[i];
       if (c.nodeType !== 1) continue;
       var ln = localName(c);
       if (ln === 't') {
-        tokens.push({ type: 'text', v: c.textContent || '', red: red });
+        tokens.push({ type: 'text', v: c.textContent || '', red: !!fmt.red, bold: !!fmt.bold, underline: !!fmt.underline });
       } else if (ln === 'tab') {
-        tokens.push({ type: 'text', v: ' ', red: red });
+        tokens.push({ type: 'text', v: ' ', red: !!fmt.red });
       } else if (ln === 'br' || ln === 'cr') {
-        tokens.push({ type: 'text', v: '\n', red: red });
+        tokens.push({ type: 'text', v: '\n', red: !!fmt.red });
       } else if (ln === 'sym') {
         var ch = (attr(c, 'w:char') || attr(c, 'char') || '').toUpperCase();
         var font = (attr(c, 'w:font') || attr(c, 'font') || '');
         var letter = symLetter(font, ch) || (UNI_LETTER[c.textContent || ''] || null);
-        tokens.push({ type: 'sym', v: ch, font: font, letter: letter, red: red });
+        tokens.push({ type: 'sym', v: ch, font: font, letter: letter, red: !!fmt.red });
       } else if (ln === 'delText' || ln === 'drawing' || ln === 'pict' || ln === 'object') {
         /* 忽略 */
       } else if (ln === 'instrText') {
         /* 忽略 */
       } else {
-        collectTokens(c, tokens, red);
+        collectTokens(c, tokens, fmt);
       }
     }
+  }
+
+  /** tokens → HTML（保留粗體／底線，用來仿原卷樣式呈現） */
+  function tokensHtml(tokens) {
+    var out = '';
+    (tokens || []).forEach(function (t) {
+      if (t.type === 'text') {
+        var s = U.esc(t.v);
+        if (t.bold) s = '<b>' + s + '</b>';
+        if (t.underline) s = '<u>' + s + '</u>';
+        out += s;
+      } else if (t.type === 'sym' && t.letter) {
+        out += '(' + t.letter + ')';
+      }
+    });
+    return out
+      .replace(/\t/g, ' ')
+      .replace(/ {2,}/g, '  ')
+      .replace(/[ ]+\n/g, '\n')
+      .replace(/\n[ ]+/g, '\n')
+      .replace(/\n{3,}/g, '\n\n');
   }
 
   /** 遞迴收集（保留文件順序） */
@@ -188,7 +250,9 @@
       if (c.nodeType !== 1) continue;
       var ln = localName(c);
       if (ln === 'r') {
-        runTokens(c, tokens, red || runIsRed(c, collectTokens._color));
+        var f = runFmt(c, collectTokens._color);
+        if (red && red.red) f.red = true;
+        runTokens(c, tokens, f);
       } else if (ln === 'pPr' || ln === 'rPr' || ln === 'tblPr' || ln === 'trPr' || ln === 'tcPr') {
         /* 屬性，略過 */
       } else if (ln === 'txbxContent' || ln === 'hyperlink' || ln === 'smartTag' ||
@@ -291,6 +355,7 @@
     var text = U.trim(tokensText(tokens));
     return {
       kind: 'p', node: p, tokens: tokens, text: text,
+      html: U.trim(tokensHtml(tokens)),
       red: tokensRed(tokens),
       letters: tokensLetters(tokens),
       options: extractOptions(tokens)
@@ -321,14 +386,29 @@
       if (tokensRed(toks)) red = true;
       letters = letters.concat(tokensLetters(toks));
       options = options.concat(extractOptions(toks));
+      /* 合併儲存格：gridSpan（橫向合併欄數）／vMerge（縱向合併） */
+      var span = 1, vmerge = null;
+      var tcPr = childByLocal(tc, 'tcPr');
+      if (tcPr) {
+        var gs = childByLocal(tcPr, 'gridSpan');
+        if (gs) {
+          var n = parseInt(attr(gs, 'w:val') || attr(gs, 'val') || '1', 10);
+          if (n > 1) span = n;
+        }
+        var vm = childByLocal(tcPr, 'vMerge');
+        if (vm) vmerge = attr(vm, 'w:val') || attr(vm, 'val') || 'continue';
+      }
       cells.push({
         text: txt,
+        html: U.trim(tokensHtml(toks)),
         visible: vis,
         red: tokensRed(toks),
         sym: symN,
         /* 只有符號、沒有文字，且是紅色 → 教師版的勾選記號 */
         tick: tokensRed(toks) && vis === '' && symN > 0,
-        letters: tokensLetters(toks)
+        letters: tokensLetters(toks),
+        span: span,
+        vmerge: vmerge
       });
     });
     return {
@@ -475,7 +555,7 @@
         options: [],
         subQuestions: [],
         table: null,
-        quotes: [],
+        quotes: [], quotesHtml: [],
         answer: '',
         answerKeys: [],
         explanation: '',
@@ -500,7 +580,7 @@
           }
           q.table = q.table || { rows: [] };
           q.table.rows.push(nb.cells.map(function (c) {
-            return { text: U.trim(c.text), visible: c.visible, red: c.red, tick: c.tick, sym: c.sym };
+            return { text: U.trim(c.text), html: U.trim(c.html || ''), visible: c.visible, red: c.red, tick: c.tick, sym: c.sym, span: c.span || 1, vmerge: c.vmerge || null };
           }));
           q.raw.push('[表] ' + nb.text);
         } else {
@@ -508,7 +588,7 @@
           if (!txt) { j++; continue; }
 
           /* 引文：給學生看的參考文字，另存為 quotes 單獨呈現 */
-          if (isQuoteLike(nb)) { q.quotes.push(txt); j++; continue; }
+          if (isQuoteLike(nb)) { q.quotes.push(txt); q.quotesHtml.push(nb.html || U.esc(txt)); j++; continue; }
 
           /* 英文選項段落：A. … B. … C. … D. … 接在題幹後 */
           if (isEnglishOption(nb)) {
@@ -537,6 +617,7 @@
           } else if (isRefText(txt)) {
             /* 要解釋的句子／字詞、選項說明等 → 當成參考文字顯示給學生 */
             q.quotes.push(txt);
+            q.quotesHtml.push(nb.html || U.esc(txt));
           } else {
             q.raw.push(txt);
           }
@@ -588,7 +669,7 @@
     function newQ() {
       n++;
       return { no: n, stem: '', skills: [], marks: 0, passageIndex: 0, section: null,
-        type: 'text', options: [], subQuestions: [], table: null, quotes: [],
+        type: 'text', options: [], subQuestions: [], table: null, quotes: [], quotesHtml: [],
         answer: '', answerKeys: [], explanation: '', raw: [], _ans: '' };
     }
     for (var i = from; i < to; i++) {
@@ -597,7 +678,7 @@
         if (!cur) continue;
         cur.table = cur.table || { rows: [] };
         cur.table.rows.push(b.cells.map(function (c) {
-          return { text: U.trim(c.text), visible: c.visible, red: c.red, tick: c.tick, sym: c.sym };
+          return { text: U.trim(c.text), html: U.trim(c.html || ''), visible: c.visible, red: c.red, tick: c.tick, sym: c.sym, span: c.span || 1, vmerge: c.vmerge || null };
         }));
         if (cur.table.rows.length && isTFNG((cur.table.rows[0] || []).map(function (c) { return c.text || ''; }))) cur.tableType = 'tfng';
         continue;
@@ -993,6 +1074,8 @@
       /* ---- 後處理 ---- */
       questions.forEach(function (q) {
         q.id = 'q' + q.no;
+        /* 段落劃分／概括題：不適合線上作答 → 標記略過（老師可於編輯頁恢復） */
+        if (isSectionSplitQ(q)) { q.skip = true; q.skipReason = '段落劃分／概括題'; }
         if (q.type === 'table' && (!q.subQuestions || !q.subQuestions.length) && !q.answer) {
           q._warn = '第 ' + q.no + ' 題為表格題但抓不到答案，請手動補充';
         }
@@ -1006,6 +1089,8 @@
         delete q._plainBody;
         delete q.raw;
       });
+      var nSkip = questions.filter(function (q) { return q.skip; }).length;
+      if (nSkip) warnings.push('已略過 ' + nSkip + ' 題「段落劃分／概括題」（不適合線上作答；可在編輯頁逐題恢復）');
 
       var totalMarks = questions.reduce(function (a, q) { return a + (q.marks || 0); }, 0);
 

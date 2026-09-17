@@ -18,6 +18,18 @@
     var wrap = U.el('div.q-input');
     var disabled = !!opts.disabled;
 
+    /* 老師指定「只顯示截圖」：原卷內容以圖片為準，作答用一個通用輸入框 */
+    if (q.imageOnly && q.image) {
+      var ta0 = U.el('textarea.input', { rows: 4, placeholder: '請在此作答…' });
+      ta0.value = ans.value || '';
+      if (disabled) ta0.disabled = true;
+      else ta0.addEventListener('input', U.debounce(function () {
+        opts.onChange && opts.onChange({ value: ta0.value });
+      }, 300));
+      wrap.appendChild(ta0);
+      return wrap;
+    }
+
     if (q.type === 'mcq') {
       var box = U.el('div.opts');
       var val = Array.isArray(ans.value) ? ans.value.slice() : (ans.value ? [ans.value] : []);
@@ -115,7 +127,13 @@
      （保留原卷的表格樣式：填充格 → 輸入框；T/F/NG → 下拉；
       組合選擇格 → 選項按鈕）
      ============================================================ */
-  function _ct(cell) { return U.trim((cell && (cell.visible != null ? cell.visible : cell.text)) || ''); }
+  /* 取儲存格最完整的文字：text（含符號轉字母）與 visible（原始可見字）取較長者，
+     避免漏字或漏符號造成「表格內容顯示不完整」 */
+  function _ct(cell) {
+    if (!cell) return '';
+    var t = U.trim(cell.text || ''), v = U.trim(cell.visible || '');
+    return t.length >= v.length ? t : v;
+  }
   function _isFill(cell) {
     var t = _ct(cell);
     if (t === '') return true;
@@ -207,12 +225,30 @@
     return td;
   }
 
+  /* 判斷題右欄：正確／錯誤／無從判斷 三個單選（橫向排列） */
+  function _tfngRadios(key, options, sub, opts) {
+    var box = U.el('span.tfng-opts');
+    var name = 'tf_' + key;
+    var list = (options && options.filter(Boolean).length) ? options.filter(Boolean) : ['正確', '錯誤', '無從判斷'];
+    list.forEach(function (o) {
+      var lab = U.el('label.tfng-opt');
+      var r = U.el('input', { type: 'radio', name: name, value: o });
+      r.checked = (sub[key] === o);
+      if (opts.disabled) r.disabled = true;
+      else r.addEventListener('change', function () { sub[key] = o; opts.onChange && opts.onChange({ sub: sub }); });
+      lab.appendChild(r);
+      lab.appendChild(U.el('span', { text: o }));
+      box.appendChild(lab);
+    });
+    return box;
+  }
+
   Forms.tableInput = function (q, ans, opts) {
     opts = opts || {};
     var sub = ans.sub || {};
     var wrap = U.el('div.qtable-wrap');
 
-    /* 1) 正確／錯誤／無從判斷（T/F/NG）*/
+    /* 1) 正確／錯誤／無從判斷（T/F/NG）：左欄敘述、右欄三個選項 */
     if (q.tableType === 'tfng') {
       if ((q.subQuestions || []).length) {
         var t1 = U.el('table.qtable.tfng');
@@ -220,7 +256,7 @@
           var tr = U.el('tr');
           tr.appendChild(U.el('td.qt-stmt', { html: U.nl2br(s.prompt || s.label || '') }));
           var td = U.el('td.qt-ans');
-          td.appendChild(_mkSelect(s.id, sub[s.id], (s.choices || []).filter(Boolean), sub, opts));
+          td.appendChild(_tfngRadios(s.id, s.choices || [], sub, opts));
           tr.appendChild(td);
           t1.appendChild(tr);
         });
@@ -229,7 +265,7 @@
       }
       var rows = q.table.rows || [];
       var hi = _isHeader(rows[0]) ? 0 : -1;
-      var opts1 = hi >= 0 ? rows[hi].slice(1).map(_ct).filter(Boolean) : ['True', 'False', 'Not Given'];
+      var opts1 = hi >= 0 ? rows[hi].slice(1).map(_ct).filter(Boolean) : ['正確', '錯誤', '無從判斷'];
       var t2 = U.el('table.qtable.tfng');
       rows.slice(hi >= 0 ? hi + 1 : 1).forEach(function (row, bi) {
         var label = _ct(row[0]);
@@ -237,7 +273,7 @@
         var tr = U.el('tr');
         tr.appendChild(U.el('td.qt-stmt', { text: label }));
         var td = U.el('td.qt-ans');
-        td.appendChild(_mkSelect(q.id + '_tf' + bi, sub[q.id + '_tf' + bi], opts1, sub, opts));
+        td.appendChild(_tfngRadios(q.id + '_tf' + bi, opts1, sub, opts));
         tr.appendChild(td);
         t2.appendChild(tr);
       });
@@ -331,7 +367,12 @@
     var tf = U.el('table.qtable');
     if (hid >= 0) {
       var h = U.el('tr');
-      rws[hid].forEach(function (c) { h.appendChild(U.el('th', { html: _ct(c) ? U.esc(_ct(c)) : '&nbsp;' })); });
+      rws[hid].forEach(function (c) {
+        if (c && c.vmerge === 'continue') return;              // 縱向合併的續格不重畫
+        var th = U.el('th', { html: (c && c.html) ? c.html.replace(/\n/g, '<br>') : (_ct(c) ? U.esc(_ct(c)) : '&nbsp;') });
+        if (c && (c.span || 1) > 1) th.setAttribute('colspan', String(c.span));
+        h.appendChild(th);
+      });
       tf.appendChild(h);
     }
     rws.forEach(function (row, ri) {
@@ -340,13 +381,17 @@
       if (row.every(function (c) { return _ct(c) === ''; })) return;
       var tr = U.el('tr');
       row.forEach(function (cell, ci) {
+        if (cell && cell.vmerge === 'continue') return;        // 縱向合併的續格不重畫
         var td = U.el('td');
+        if (cell && (cell.span || 1) > 1) td.setAttribute('colspan', String(cell.span));
         var t = _ct(cell);
         if (_hasBlank(t) && !_isAllBlankText(t)) {
           /* 文字中夾著填空位置（如「第　段」）→ 就地插入輸入框 */
           td.appendChild(_cellFrag(t, q.id + '_r' + ri + 'c' + ci, sub, opts).node);
         } else if (_isFill(cell)) {
           td.appendChild(_mkInput(q.id + '_r' + ri + 'c' + ci, sub[q.id + '_r' + ri + 'c' + ci], sub, opts));
+        } else if (cell && cell.html) {
+          td.innerHTML = cell.html.replace(/\n/g, '<br>');     // 保留原卷粗體／底線
         } else {
           td.innerHTML = t ? U.esc(t) : '&nbsp;';
         }
@@ -359,10 +404,13 @@
   };
 
   Forms.quotesBlock = function (q) {
-    if (!q.quotes || !q.quotes.length) return null;
+    if (!(q.quotes && q.quotes.length)) return null;
     var box = U.el('div.q-quotes');
-    q.quotes.forEach(function (qt) {
-      box.appendChild(U.el('blockquote.q-quote', { html: U.nl2br(U.esc(qt)) }));
+    var hi = (q.quotesHtml && q.quotesHtml.length) ? q.quotesHtml : null;
+    q.quotes.forEach(function (qt, i) {
+      /* 有保留原卷樣式（粗體／底線）就用 html；否則純文字 */
+      var inner = hi && hi[i] ? hi[i].replace(/\n/g, '<br>') : U.nl2br(U.esc(qt));
+      box.appendChild(U.el('blockquote.q-quote', { html: inner }));
     });
     return box;
   };
@@ -695,8 +743,15 @@
   var _unloadHandler = null;   // 離開頁面前把雲端草稿補送出去
 
   /* ---------- 分卷/分篇：把題目切成可分別提交的群組 ---------- */
+  /* 實際要作答的題目（略過「段落劃分／概括題」等不適合線上作答者） */
+  function activeQs(quiz) {
+    return ((quiz && quiz.questions) || []).filter(function (q) { return !q.skip; });
+  }
+  function activeMarks(quiz) {
+    return activeQs(quiz).reduce(function (a, q) { return a + (q.marks || 0); }, 0);
+  }
   function groupQuestions(quiz) {
-    var qs = (quiz && quiz.questions) || [];
+    var qs = activeQs(quiz);
     var hasSection = qs.some(function (q) { return q.section; });
     if (hasSection) {
       var map = {}, order = [];
@@ -818,7 +873,7 @@
     bar.appendChild(U.el('div.row.between', {}, [
       U.el('div', {}, [
         U.el('h2.mb0', { html: U.esc(quiz.title) }),
-        U.el('div.tiny.muted', { text: (quiz.level ? quiz.level + '・' : '') + (quiz.questions || []).length + ' 題・共 ' + quiz.totalMarks + ' 分' })
+        U.el('div.tiny.muted', { text: (quiz.level ? quiz.level + '・' : '') + activeQs(quiz).length + ' 題・共 ' + activeMarks(quiz) + ' 分' })
       ]),
       U.el('div.row', {}, [
         U.el('span.tiny.muted', { text: '已用時間 ' }), timerEl,
@@ -829,7 +884,7 @@
     var progFill = U.el('i', { style: { width: '0%' } });
     prog.appendChild(progFill);
     bar.appendChild(prog);
-    var progTxt = U.el('div.tiny.faint', { text: '作答進度 0 / ' + (quiz.questions || []).length });
+    var progTxt = U.el('div.tiny.faint', { text: '作答進度 0 / ' + activeQs(quiz).length });
     bar.appendChild(progTxt);
     view.appendChild(bar);
 
@@ -943,8 +998,8 @@
       updateProgress();
     }
     function updateProgress() {
-      var total = (quiz.questions || []).length;
-      var done = quiz.questions.filter(function (q) {
+      var total = activeQs(quiz).length;
+      var done = activeQs(quiz).filter(function (q) {
         var a = sub.answers[q.id];
         if (!a) return false;
         if (q.type === 'mcq') return (a.value || []).length > 0;
@@ -1043,6 +1098,13 @@
     head.appendChild(stem);
     card.appendChild(head);
 
+    /* 老師附加的題目截圖（原文樣式也不夠清楚時使用） */
+    if (q.image) {
+      card.appendChild(U.el('div.q-image', {}, [
+        U.el('img', { src: q.image, alt: '題目截圖', style: { maxWidth: '100%', borderRadius: '8px', border: '1.5px solid var(--line)' } })
+      ]));
+    }
+
     var qb = Forms.quotesBlock(q);
     if (qb) card.appendChild(qb);
 
@@ -1060,7 +1122,7 @@
   }
 
   function submit(quiz, sub, view, group) {
-    var qs = group ? group.questions : (quiz.questions || []);
+    var qs = group ? group.questions : activeQs(quiz);
     var total = qs.length;
     var answered = qs.filter(function (q) {
       var a = sub.answers[q.id];
@@ -1089,7 +1151,7 @@
   }
 
   function doSubmit(quiz, sub, view, group) {
-    var qs = group ? group.questions : (quiz.questions || []);
+    var qs = group ? group.questions : activeQs(quiz);
     if (_session.timer && !group) clearInterval(_session.timer);
 
     var auto = 0, autoMax = 0;
@@ -1153,7 +1215,15 @@
     view.innerHTML = '<div class="empty">載入中…</div>';
     Store.submission.get(subId).then(function (sub) {
       if (!sub) { view.innerHTML = '<div class="empty">找不到這份作答</div>'; return; }
-      return Backend.getQuiz(sub.quizId).then(function (quiz) { renderResult(view, sub, quiz); });
+      /* 合併雲端版本：老師可能已在別的裝置批改 → 學生才看得到分數與評語 */
+      var p = (Backend.getSubmission)
+        ? Backend.getSubmission(sub.quizId, sub.studentId).catch(function () { return sub; })
+        : Promise.resolve(sub);
+      return p.then(function (merged) {
+        return Backend.getQuiz(sub.quizId).then(function (quiz) {
+          renderResult(view, merged || sub, quiz);
+        });
+      });
     });
   };
 
@@ -1163,7 +1233,7 @@
     var pct = U.percent(s.total, s.max);
 
     /* 分段提交：只檢討這一份提交涵蓋的題目 */
-    var qs = quiz.questions || [];
+    var qs = activeQs(quiz);
     if (sub.scope && sub.scope.key) {
       var g = groupQuestions(quiz).filter(function (x) { return x.key === sub.scope.key; })[0];
       if (g) qs = g.questions;
@@ -1186,6 +1256,10 @@
       card.appendChild(U.el('div.warnbox.mt2', {
         text: '選擇題已自動計分；文字題尚待老師批閱，分數會再更新。'
       }));
+    } else {
+      card.appendChild(U.el('div.infobox.mt2', {
+        html: '✔ <b>老師已完成批改</b>　—— 下方每題可看到參考答案、老師給的分數與評語。'
+      }));
     }
     view.appendChild(card);
 
@@ -1207,6 +1281,11 @@
       head.appendChild(stem);
       box.appendChild(head);
 
+      if (q.image) {
+        box.appendChild(U.el('div.q-image', {}, [
+          U.el('img', { src: q.image, alt: '題目截圖', style: { maxWidth: '100%', borderRadius: '8px', border: '1.5px solid var(--line)' } })
+        ]));
+      }
       var qb2 = Forms.quotesBlock(q);
       if (qb2) box.appendChild(qb2);
 

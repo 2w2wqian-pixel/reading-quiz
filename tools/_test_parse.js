@@ -93,6 +93,8 @@ const U = {
     while ((m = re.exec(t))) total += parseFloat(m[1]);
     return total;
   },
+  esc: function (s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); },
+  nl2br: function (s) { return String(s == null ? '' : s).replace(/\n/g,'<br>'); },
   stripSkills: function (text) {
     var skills = [];
     var out = String(text || '').replace(/[【\[]([^】\]]{1,8})[】\]]/g, function (all, inner) {

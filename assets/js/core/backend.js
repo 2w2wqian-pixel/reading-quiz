@@ -646,6 +646,34 @@
       });
     },
 
+    /** 取某學生某份試卷的最新作答：合併本機與雲端，雲端（含老師批改）優先 */
+    getSubmission: function (quizId, studentId) {
+      var localP = Store.submission.ofStudent(studentId).then(function (list) {
+        return (list || []).filter(function (s) { return s.quizId === quizId; })
+          .sort(function (a, b) { return String(b.submittedAt || '').localeCompare(String(a.submittedAt || '')); })[0] || null;
+      }).catch(function () { return null; });
+      var cloudP = (Firebase.ok() || Hook.ok())
+        ? Cloud.get('submission', recId('submission', quizId, studentId))
+          .then(function (rec) { return rec && (rec.payload || rec); })
+          .catch(function () { return null; })
+        : Promise.resolve(null);
+      return Promise.all([localP, cloudP]).then(function (r) {
+        var loc = r[0], cloud = r[1];
+        if (!loc) return cloud;
+        if (!cloud) return loc;
+        var merged = Object.assign({}, loc, cloud);
+        var ans = {};
+        Object.keys(loc.answers || {}).concat(Object.keys(cloud.answers || {})).forEach(function (k) {
+          ans[k] = Object.assign({}, (loc.answers || {})[k], (cloud.answers || {})[k]);
+        });
+        merged.answers = ans;
+        merged.score = Object.assign({}, loc.score, cloud.score);
+        merged.id = loc.id;
+        merged.submittedAt = loc.submittedAt || cloud.submittedAt;
+        return merged;
+      });
+    },
+
     _ghSubmissions: function (quizId) {
       var base = (Settings.get().gh.path || 'data') + '/submissions';
       var p = quizId ? Promise.resolve([quizId]) : GitHub.list(base).catch(function () { return []; });

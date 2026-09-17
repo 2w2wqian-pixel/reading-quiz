@@ -34,6 +34,34 @@
     return (a.ids || []).indexOf(studentId) >= 0;
   }
 
+  /* 讀圖檔 → dataURL（順便縮圖，避免儲存過大） */
+  function imageToDataURL(file, maxW) {
+    maxW = maxW || 1200;
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        var raw = reader.result;
+        try {
+          var img = new Image();
+          img.onload = function () {
+            try {
+              var scale = Math.min(1, maxW / (img.width || maxW));
+              var c = document.createElement('canvas');
+              c.width = Math.max(1, Math.round((img.width || maxW) * scale));
+              c.height = Math.max(1, Math.round((img.height || maxW) * scale));
+              c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+              resolve(c.toDataURL('image/jpeg', 0.82));
+            } catch (e) { resolve(raw); }
+          };
+          img.onerror = function () { resolve(raw); };
+          img.src = raw;
+        } catch (e) { resolve(raw); }
+      };
+      reader.onerror = function () { reject(new Error('讀取圖片失敗')); };
+      reader.readAsDataURL(file);
+    });
+  }
+
   /* ---------- 指派作業 ---------- */
   function assignDialog(quiz, onSaved) {
     Backend.getRoster().then(function (list) {
@@ -568,6 +596,49 @@
     stem.addEventListener('input', function () { q.stem = stem.value; });
     box.appendChild(U.el('div.mt1', {}, [U.el('label.tiny.muted', { text: '題幹' }), stem]));
 
+    /* 略過此題（例如段落劃分／概括題） */
+    var skipChk = U.el('input', { type: 'checkbox' });
+    skipChk.checked = !!q.skip;
+    skipChk.addEventListener('change', function () { q.skip = skipChk.checked; });
+    box.appendChild(U.el('label.check.mt1', { style: { display: 'flex' } }, [
+      skipChk,
+      U.el('span', { text: '略過此題（學生不會看到、不計分）' + (q.skipReason ? '　— ' + q.skipReason : '') })
+    ]));
+
+    /* 題目截圖（原文樣式仍不夠清楚時，用截圖取代） */
+    var imgPrev = U.el('div.mt1');
+    var imgOnlyChk = U.el('input', { type: 'checkbox' });
+    imgOnlyChk.checked = !!q.imageOnly;
+    imgOnlyChk.addEventListener('change', function () { q.imageOnly = imgOnlyChk.checked; });
+    function drawImg() {
+      imgPrev.innerHTML = '';
+      if (!q.image) return;
+      imgPrev.appendChild(U.el('img', {
+        src: q.image,
+        style: { maxWidth: '260px', borderRadius: '6px', border: '1.5px solid var(--line)' }
+      }));
+    }
+    var imgRow = U.el('div.row.mt1', {}, [
+      U.el('button.btn.xs', {
+        text: q.image ? '更換截圖' : '附加截圖',
+        onclick: function () {
+          U.pickFile('image/*', function (f) {
+            imageToDataURL(f).then(function (d) {
+              q.image = d; drawImg(); U.toast('已附加截圖（記得按儲存）', 'ok');
+            }).catch(function (e) { U.toast('讀取圖片失敗：' + e.message, 'bad'); });
+          });
+        }
+      }),
+      U.el('button.btn.xs.danger', { text: '移除截圖', onclick: function () { q.image = null; drawImg(); } }),
+      U.el('label.check', { style: { display: 'flex', marginLeft: '8px' } }, [
+        imgOnlyChk, U.el('span', { text: '只顯示截圖（隱藏解析出的題目內容）' })
+      ])
+    ]);
+    box.appendChild(U.el('label.tiny.muted.mt1', { text: '題目截圖（選填；上載後記得按「儲存」）' }));
+    box.appendChild(imgRow);
+    box.appendChild(imgPrev);
+    drawImg();
+
     /* 分數 / 所屬文章 */
     var mk = U.el('input.input', { type: 'number', value: q.marks || 0, style: { maxWidth: '110px' } });
     mk.addEventListener('input', function () { q.marks = parseFloat(mk.value) || 0; });
@@ -674,10 +745,18 @@
     });
     (quiz.questions || []).forEach(function (q, i) {
       var box = U.el('div.q');
+      if (q.skip) box.appendChild(U.el('div.tiny.faint', { text: '（此題已略過，學生不會看到）' }));
       box.appendChild(U.el('div.q-head', {}, [
         U.el('div.q-no', { text: String(q.no != null ? q.no : i + 1) }),
         U.el('div.q-stem', { html: U.esc(q.stem) })
       ]));
+      if (q.image) {
+        box.appendChild(U.el('div.q-image', {}, [
+          U.el('img', { src: q.image, style: { maxWidth: '100%', borderRadius: '8px', border: '1.5px solid var(--line)' } })
+        ]));
+      }
+      var qb = RQ.forms.quotesBlock(q);
+      if (qb) box.appendChild(qb);
       box.appendChild(RQ.forms.input(q, {}, { disabled: true }));
       d.appendChild(box);
     });

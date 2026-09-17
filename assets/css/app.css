@@ -315,6 +315,20 @@ table.qtable.tfng td.qt-ans,table.qtable td.qt-ans{width:42%;min-width:160px}
 table.qtable.grid td,table.qtable.grid th{text-align:center}
 label.optcell{display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:4px}
 label.optcell input{margin:0}
+/* 判斷題：左敘述、右三個選項（橫向） */
+table.qtable.tfng td.qt-ans{white-space:nowrap}
+span.tfng-opts{display:inline-flex;gap:12px;flex-wrap:wrap}
+label.tfng-opt{display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:14px;padding:2px 8px;border:1.5px solid var(--line);border-radius:999px;background:#FFFDF8}
+label.tfng-opt input{margin:0}
+/* 格內填空：文字中夾著的小輸入框 */
+span.cellfill{display:inline}
+span.cellfill input.input{padding:2px 6px;font-family:var(--font-cn)}
+/* 題目截圖 */
+.q-image{margin:10px 0 2px}
+.q-image img{display:block;max-width:100%}
+/* 表格內容完整呈現：允許換行、不裁切 */
+table.qtable{word-break:break-word}
+table.qtable td,table.qtable th{white-space:normal}
 /* 引文 / 參考文字：獨立引用區塊 */
 .q-quotes{margin:10px 0 2px;display:flex;flex-direction:column;gap:8px}
 blockquote.q-quote{

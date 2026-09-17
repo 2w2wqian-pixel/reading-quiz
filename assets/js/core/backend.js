@@ -300,6 +300,10 @@
       Object.assign(headers, opts.headers || {});
       return fetch('https://api.github.com' + path, {
         method: opts.method || 'GET', headers: headers,
+        /* 一定要 no-store：GitHub API 的 GET 會帶 Cache-Control max-age=60，
+           若讀到快取的舊內容，拿到的 sha 就是舊的 → PUT 會被 409 拒絕
+           （錯誤訊息長得像「xxx.json does not match <sha>」）。 */
+        cache: 'no-store',
         body: opts.body ? JSON.stringify(opts.body) : undefined
       }).then(function (r) {
         if (r.status === 404) return null;
@@ -324,20 +328,42 @@
         try { return JSON.parse(r.content); } catch (e) { return dflt; }
       });
     },
+    /**
+     * 寫入檔案（Contents API）。因為是「先讀 sha → 再 PUT」，若在這一瞬間檔案被
+     * 別人改動（例如連續發佈兩份試卷、或另一台裝置同時發佈），GitHub 會回
+     * 409 並附帶訊息「<path> does not match <sha>」。
+     * 這裡會自動重讀最新 sha 重試（最多 3 次），避免老師看到無解的失敗訊息。
+     */
     write: function (path, objOrText, message) {
       if (!GitHub.ok()) return Promise.reject(new Error('尚未設定 GitHub'));
       var c = GitHub.cfg();
       var text = (typeof objOrText === 'string') ? objOrText : JSON.stringify(objOrText, null, 2);
-      var body = {
-        message: message || ('update ' + path),
-        content: b64encode(text), branch: c.branch || 'main'
-      };
-      return GitHub.read(path).then(function (cur) { return cur ? cur.sha : null; })
-        .catch(function () { return null; })
-        .then(function (sha) {
-          if (sha) body.sha = sha;
-          return GitHub.api('/repos/' + c.owner + '/' + c.repo + '/contents/' + path, { method: 'PUT', body: body });
-        });
+      var attempt = 0;
+
+      function put() {
+        attempt++;
+        return GitHub.read(path).then(function (cur) { return cur ? cur.sha : null; })
+          .catch(function () { return null; })
+          .then(function (sha) {
+            var body = {
+              message: message || ('update ' + path),
+              content: b64encode(text), branch: c.branch || 'main'
+            };
+            if (sha) body.sha = sha;
+            return GitHub.api('/repos/' + c.owner + '/' + c.repo + '/contents/' + path, { method: 'PUT', body: body });
+          })
+          .catch(function (e) {
+            var msg = (e && e.message) || '';
+            if (attempt < 3 && /does not match|is at|\b409\b/i.test(msg)) {
+              return new Promise(function (res) { setTimeout(res, 300 * attempt); }).then(put);
+            }
+            if (/does not match|is at|\b409\b/i.test(msg)) {
+              throw new Error('試卷清單同時被更新（檔案版本衝到），請再按一次「發佈」即可');
+            }
+            throw e;
+          });
+      }
+      return put();
     },
     list: function (dir) {
       if (!GitHub.ok()) return Promise.reject(new Error('尚未設定 GitHub'));
@@ -546,13 +572,26 @@
       }
       if (GitHub.ok()) {
         var base = (Settings.get().gh.path || 'data') + '/quizzes';
-        jobs.push(GitHub.readJSON(base + '/index.json', []).then(function (idx) {
-          var m = metaOf(quiz, 'published');
-          var i = idx.findIndex(function (x) { return x.id === quiz.id; });
-          if (i >= 0) idx[i] = m; else idx.push(m);
-          return GitHub.write(base + '/index.json', idx, 'publish index: ' + quiz.title)
-            .then(function () { return GitHub.write(base + '/' + quiz.id + '.json', quiz, 'publish quiz: ' + quiz.title); });
-        }));
+        /* 順序很重要：先寫試卷本體、再更新清單。
+           反過來的話，若清單寫成功、試卷檔寫失敗，清單就會指向一個不存在的檔案
+           → 學生端會出現「找不到這份試卷」。 */
+        jobs.push(GitHub.write(base + '/' + quiz.id + '.json', quiz, 'publish quiz: ' + quiz.title)
+          .then(function () {
+            return GitHub.readJSON(base + '/index.json', []).then(function (idx) {
+              idx = Array.isArray(idx) ? idx : [];
+              var m = metaOf(quiz, 'published');
+              var i = idx.findIndex(function (x) { return x && x.id === quiz.id; });
+              if (i >= 0) idx[i] = m; else idx.push(m);
+              return GitHub.write(base + '/index.json', idx, 'publish index: ' + quiz.title);
+            });
+          })
+          .then(function () {
+            /* 自我檢查：清單裡真的要有這份試卷，否則寧可報錯也不要「假成功」 */
+            return GitHub.readJSON(base + '/index.json', []).then(function (idx) {
+              var found = (idx || []).some(function (x) { return x && x.id === quiz.id; });
+              if (!found) throw new Error('試卷清單沒有寫入成功，請再按一次「發佈」');
+            });
+          }));
       }
       if (!jobs.length) {
         quiz.published = wasPublished;

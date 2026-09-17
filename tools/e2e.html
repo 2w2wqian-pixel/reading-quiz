@@ -90,6 +90,10 @@ function seedQuiz(id, title) {
   function check(name, ok, extra) { results.push({ name: name, ok: !!ok, extra: extra || '' }); }
 
   try {
+    /* 測試用假 repo：把「隨站發佈」通道指到 tools/_e2e_data/，
+       這樣測試就完全不會動到 data/（老師真正的試卷）。 */
+    if (RQ.backend && RQ.backend.Published) RQ.backend.Published.base = 'tools/_e2e_data/';
+
     /* 學生身分 */
     RQ.settings.set({ session: { id: 'stu_e2e', name: '測試生', role: 'student', username: 'e2e' } });
 

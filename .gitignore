@@ -10,3 +10,4 @@ tools/_e2e_httpd.log
 tools/_e2e_dom.html
 tools/_e2e_index.bak
 tools/_shot*.png
+tools/_e2e_data/

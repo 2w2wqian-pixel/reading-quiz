@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>E2E_INIT</title>
+<link rel="stylesheet" href="../assets/css/app.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar"><div class="topbar-inner">
+    <a class="brand" href="#/"><span class="brand-badge">閱</span><span class="brand-text"><b>閱讀理解練習站</b><small>E2E</small></span></a>
+    <nav class="nav" id="nav">
+      <a href="#/" class="nav-link" data-route="home">首頁</a>
+      <a href="#/student" class="nav-link" data-route="student">學生專區</a>
+      <a href="#/teacher" class="nav-link" data-route="teacher">老師專區</a>
+      <a href="#/settings" class="nav-link" data-route="settings">設定</a>
+    </nav>
+    <div class="who" id="who"></div>
+  </div></header>
+  <main id="view" class="view"></main>
+</div>
+<div id="toast-root" class="toast-root"></div>
+<div id="modal-root"></div>
+
+<script src="../assets/js/lib/jszip.min.js"></script>
+<script src="../assets/js/core/util.js"></script>
+<script src="../assets/js/core/crypto.js"></script>
+<script src="../assets/js/core/store.js"></script>
+<script src="../assets/js/core/backend.js"></script>
+<script src="../assets/js/core/docx-parser.js"></script>
+<script src="../assets/js/ui/highlighter.js"></script>
+<script src="../assets/js/teacher.js"></script>
+<script src="../assets/js/student.js"></script>
+<script src="../assets/js/app.js"></script>
+<script>
+window.__ERR__ = [];
+window.addEventListener('error', function (e) { window.__ERR__.push(String(e.message) + ' @' + (e.filename || '') + ':' + e.lineno); });
+
+function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function viewText() { return (document.getElementById('view') || {}).innerText || document.getElementById('view').textContent || ''; }
+/* 只取 #view 的文字：document.body.textContent 會把測試腳本原始碼也算進去 */
+function bodyText() { return (document.getElementById('view') || {}).textContent || ''; }
+
+function finish(payload) {
+  var bad = payload.results.filter(function (r) { return !r.ok; }).length;
+  document.title = 'E2E ' + (bad ? 'FAIL(' + bad + ')' : 'OK');
+  var pre = document.createElement('pre');
+  pre.id = 'result';
+  pre.textContent = JSON.stringify(payload, null, 1);
+  document.body.appendChild(pre);
+  document.body.setAttribute('data-done', '1');
+
+  /* 把結果打回 server 的 access log：--dump-dom 會受 virtual time budget
+     影響（真實 I/O 還沒跑完就被截斷），用 log 才穩定。 */
+  var line = 'START' + payload.results.map(function (r) {
+    return '||' + (r.ok ? 'PASS' : 'FAIL') + '::' + r.name + (r.ok ? '' : '::' + String(r.extra || '').slice(0, 120));
+  }).join('') + '||ERRS::' + (payload.errors || []).join(';').slice(0, 200) + '||FATAL::' + String(payload.fatal || '').slice(0, 200) + 'END';
+  (new Image()).src = '/__e2e?r=' + encodeURIComponent(line) + '&n=' + Math.random();
+}
+
+/* 中文 id：這是關鍵 — location.hash 會把它 percent-encode */
+var ZH_LOCAL = '中二學期試卷-02-閱讀能力考核-e2e';
+var ZH_REPO = '中六卷一閱讀能力考核-e2e';   /* 只存在於 data/quizzes/（模擬「已發佈」） */
+
+function seedQuiz(id, title) {
+  return RQ.store.quiz.save({
+    id: id, title: title, level: '中二', source: 'e2e', createdAt: new Date().toISOString(),
+    published: true, totalMarks: 6,
+    passages: [], 
+    questions: [
+      { no: 1, id: 'q1', type: 'text', stem: '試解釋「躊躇」的意思。', marks: 3, options: [], subQuestions: [], table: null, quotes: [] },
+      { no: 2, id: 'q2', type: 'text', stem: '本文主旨是甚麼？', marks: 3, options: [], subQuestions: [], table: null, quotes: [] }
+    ]
+  });
+}
+
+(async function () {
+  var results = [];
+  function check(name, ok, extra) { results.push({ name: name, ok: !!ok, extra: extra || '' }); }
+
+  try {
+    /* 學生身分 */
+    RQ.settings.set({ session: { id: 'stu_e2e', name: '測試生', role: 'student', username: 'e2e' } });
+
+    /* ---------- A. 本機試卷 + 中文 id（走 hash 路由） ---------- */
+    await seedQuiz(ZH_LOCAL, '中文卷（本機）E2E');
+    location.hash = '#/quiz/' + ZH_LOCAL;      /* 瀏覽器會存成 %E4%B8%AD… */
+    await wait(2200);
+    var hashNow = location.hash;
+    var t1 = viewText();
+    check('A: hash 被 percent-encode（重現條件）', /%E4%B8%AD/.test(hashNow), hashNow.slice(0, 60));
+    check('A: 中文 id 試卷載入成功（非「找不到」）', t1.indexOf('中文卷（本機）E2E') >= 0, t1.slice(0, 80).replace(/\s+/g, ' '));
+    check('A: 沒有出現「找不到這份試卷」', t1.indexOf('找不到這份試卷') < 0);
+
+    /* ---------- B. 只有 repo（已發佈）的試卷 + 中文 id ---------- */
+    await RQ.store.quiz.del(ZH_LOCAL);
+    location.hash = '#/quiz/' + ZH_REPO;
+    await wait(3000);
+    var t2 = viewText();
+    check('B: 已發佈（repo）試卷以中文 id 載入', t2.indexOf('中六卷一') >= 0, t2.slice(0, 90).replace(/\s+/g, ' '));
+    check('B: 沒有出現「找不到這份試卷」', t2.indexOf('找不到這份試卷') < 0);
+
+    /* ---------- C. 生詞本：作答中的草稿生詞要出現 ---------- */
+    await RQ.store.kv.set('draft:' + ZH_LOCAL + ':stu_e2e', {
+      quizId: ZH_LOCAL, studentId: 'stu_e2e', answers: {}, marks: [],
+      vocab: [{ id: 'v1', word: '躊躇', note: '不明白' }, { id: 'v2', word: '斡旋', note: '' }],
+      notes: [], savedAt: new Date().toISOString()
+    });
+    /* ---------- D. 生詞本：已提交的作答生詞也要出現（且在別的來源） ---------- */
+    await RQ.store.submission.save({
+      id: 'sub_e2e', quizId: ZH_LOCAL, studentId: 'stu_e2e', studentName: '測試生',
+      submittedAt: new Date().toISOString(), answers: {}, marks: [],
+      vocab: [{ id: 'v3', word: '鏗鏘', note: '形容聲音響亮' }],
+      score: { auto: 1, autoMax: 2, total: 1, max: 6 }
+    });
+    await seedQuiz(ZH_LOCAL, '中文卷（本機）E2E');
+
+    location.hash = '#/student';
+    await wait(3200);
+    var t3 = bodyText();
+    check('C: 草稿生詞「躊躇」出現在學生專區生詞本', t3.indexOf('躊躇') >= 0);
+    check('C: 草稿生詞「斡旋」出現在學生專區生詞本', t3.indexOf('斡旋') >= 0);
+    check('D: 已提交生詞「鏗鏘」出現在學生專區生詞本', t3.indexOf('鏗鏘') >= 0);
+    check('C: 不再顯示「還沒有收集生詞」', t3.indexOf('還沒有收集生詞') < 0);
+    check('E: 作答過的試卷顯示「已完成」', t3.indexOf('已完成') >= 0);
+
+    finish({ results: results, errors: window.__ERR__, hash: hashNow });
+  } catch (e) {
+    finish({ results: results, fatal: String(e && e.stack || e), errors: window.__ERR__ });
+  }
+})();
+</script>
+</body>
+</html>

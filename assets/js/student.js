@@ -608,10 +608,12 @@
 
     Promise.all([
       Backend.listQuizzes(),
-      Store.submission.ofStudent(who.id)
+      Backend.mySubmissions(who.id).catch(function () { return Store.submission.ofStudent(who.id); }),
+      Backend.myVocab(who.id).catch(function () { return []; })
     ]).then(function (r) {
       var quizzes = r[0].filter(function (q) { return q.published !== false || q._src === 'local'; });
       var mine = r[1] || [];
+      var myVocab = r[2] || [];
       box.innerHTML = '';
 
       if (!quizzes.length) {
@@ -706,18 +708,15 @@
         });
       }
 
-      /* 生詞本 */
+      /* 生詞本（合併：已提交的作答 + 作答中的草稿；本機 + 雲端） */
       box.appendChild(U.el('h2.mt3', { text: '我的生詞本' }));
-      box.appendChild(vocabBook(mine));
+      box.appendChild(vocabBook(myVocab));
     });
   };
 
-  function vocabBook(subs) {
-    var map = {};
-    (subs || []).forEach(function (s) {
-      (s.vocab || []).forEach(function (v) { map[v.word] = v; });
-    });
-    var words = Object.keys(map);
+  /** vocab：生詞陣列 [{word, note, ts, ...}]（已由 Backend.myVocab 去重合併） */
+  function vocabBook(vocab) {
+    var words = (vocab || []).filter(function (v) { return v && U.trim(v.word || ''); });
     if (!words.length) {
       return U.el('div.empty', {}, [
         U.el('div.big', { text: '🔖' }),
@@ -725,13 +724,13 @@
       ]);
     }
     var wrap = U.el('div.card');
-    words.forEach(function (w) {
-      var v = map[w];
-      var row = U.el('div.row.between', { style: { borderBottom: '1px dashed var(--line)', padding: '6px 0' } }, [
-        U.el('b', { text: w }),
+    words.forEach(function (v) {
+      wrap.appendChild(U.el('div.row.between', {
+        style: { borderBottom: '1px dashed var(--line)', padding: '6px 0' }
+      }, [
+        U.el('b', { text: v.word }),
         U.el('span.tiny.muted', { text: v.note || '' })
-      ]);
-      wrap.appendChild(row);
+      ]));
     });
     return wrap;
   }
@@ -803,16 +802,47 @@
     })[0];
   }
 
-  Student.take = function (view, quizId) {
+  /** 真的找不到試卷時的說明（不要只丟一句「找不到」讓學生卡住） */
+  function quizNotFound(view, quizId) {
+    view.innerHTML = '';
+    view.appendChild(U.el('div.card.center', {}, [
+      U.el('div.big', { text: '🔍' }),
+      U.el('h2', { text: '找不到這份試卷' }),
+      U.el('p.muted', {
+        html: '可能原因：<br>' +
+          '① 老師尚未按「發佈到 GitHub」（草稿只有老師的裝置看得到）<br>' +
+          '② 剛發佈，GitHub Pages 還在更新（通常 1 分鐘內）<br>' +
+          '③ 這台裝置還沒有同步到雲端'
+      }),
+      U.el('div.tiny.faint', { text: '試卷編號：' + quizId }),
+      U.el('div.row.mt2', { style: { justifyContent: 'center' } }, [
+        U.el('button.btn.primary', {
+          text: '重新載入', onclick: function () { Student.take(view, quizId); }
+        }),
+        U.el('a.btn', { href: '#/student', text: '回學生專區' })
+      ])
+    ]));
+  }
+
+  Student.take = function (view, quizId, _retried) {
     view.innerHTML = '<div class="empty">載入試卷中…</div>';
     var who = Settings.who();
 
     Promise.all([
       Backend.getQuiz(quizId),
-      Store.submission.ofStudent(who.id)
+      Backend.mySubmissions(who.id).catch(function () { return Store.submission.ofStudent(who.id); })
     ]).then(function (r) {
       var quiz = r[0];
-      if (!quiz) { view.innerHTML = '<div class="empty">找不到這份試卷</div>'; return; }
+      if (!quiz) {
+        /* 剛發佈的試卷可能還沒同步到 CDN，稍等再試一次 */
+        if (!_retried) {
+          view.innerHTML = '<div class="empty">正在讀取試卷…</div>';
+          setTimeout(function () { Student.take(view, quizId, true); }, 1800);
+          return;
+        }
+        quizNotFound(view, quizId);
+        return;
+      }
       var past = (r[1] || []).filter(function (s) { return s.quizId === quizId; });
       var groups = groupQuestions(quiz);
       var grouped = groups.length > 1;
@@ -908,7 +938,12 @@
         passage: p,
         marks: sub.marks,
         vocab: sub.vocab,
-        onChange: function (marks, vocab) { sub.marks = marks; sub.vocab = vocab; autosave(); }
+        onChange: function (marks, vocab) {
+          var grew = (vocab || []).length !== (sub.vocab || []).length;
+          sub.marks = marks; sub.vocab = vocab;
+          /* 生詞有變動就立刻存（含雲端），學生專區的生詞本才馬上看得到 */
+          autosave(grew);
+        }
       });
       _session.hls.push(hl);
 
@@ -1214,6 +1249,13 @@
   Student.result = function (view, subId) {
     view.innerHTML = '<div class="empty">載入中…</div>';
     Store.submission.get(subId).then(function (sub) {
+      if (sub) return sub;
+      /* 本機沒有（換了裝置）→ 從雲端／其他來源找回這份作答 */
+      var who = Settings.who();
+      return Backend.mySubmissions(who.id).then(function (list) {
+        return (list || []).filter(function (s) { return s.id === subId; })[0] || null;
+      }).catch(function () { return null; });
+    }).then(function (sub) {
       if (!sub) { view.innerHTML = '<div class="empty">找不到這份作答</div>'; return; }
       /* 合併雲端版本：老師可能已在別的裝置批改 → 學生才看得到分數與評語 */
       var p = (Backend.getSubmission)

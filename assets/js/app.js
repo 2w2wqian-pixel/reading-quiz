@@ -9,9 +9,16 @@
   var U = RQ.util, Settings = RQ.settings, Store = RQ.store, Backend = RQ.backend;
   var view, whoEl;
 
+  /* location.hash 會把非 ASCII 字元（例如中文試卷 id）轉成 percent-encoding，
+     讀回來時是 %E4%B8%AD…，必須解碼才對得上真正的 id。 */
+  function decodeSeg(s) {
+    if (s == null) return s;
+    try { return decodeURIComponent(s); } catch (e) { return s; }
+  }
+
   function route() {
     var hash = location.hash.replace(/^#\/?/, '');
-    var parts = hash.split('/').filter(function (x) { return x !== ''; });
+    var parts = hash.split('/').filter(function (x) { return x !== ''; }).map(decodeSeg);
     var page = parts[0] || 'home';
     var arg = parts[1] || null;
 

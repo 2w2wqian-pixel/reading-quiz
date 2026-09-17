@@ -404,44 +404,119 @@
     GitHub: GitHub, Published: Published, Hook: Hook, Firebase: Firebase, Cloud: Cloud,
 
     /* ---------- 試卷 ---------- */
+
+    /** 雲端試卷清單：優先用 quizzesIndex；沒有就掃 quizzes 節點自己組 meta */
+    _cloudIndex: function () {
+      if (Firebase.ok()) {
+        return Firebase.get('quizzesIndex').then(function (j) {
+          if (Array.isArray(j) && j.length) return j;
+          return Cloud.getAll('quiz').then(function (list) {
+            return (list || []).map(function (q) { return q && q.id ? metaOf(q, 'cloud') : null; }).filter(Boolean);
+          });
+        }).catch(function () { return []; });
+      }
+      if (Hook.ok()) {
+        return Cloud.getAll('quiz').then(function (list) {
+          return (list || []).map(function (q) { return q && q.id ? metaOf(q, 'cloud') : null; }).filter(Boolean);
+        }).catch(function () { return []; });
+      }
+      return Promise.resolve([]);
+    },
+
     listQuizzes: function () {
-      var jobs = [Store.quiz.all().catch(function () { return []; }), Published.index()];
-      if (Firebase.ok()) jobs.push(Firebase.get('quizzesIndex').then(function (j) { return j || []; }));
-      return Promise.all(jobs).then(function (r) {
+      return Promise.all([
+        Store.quiz.all().catch(function () { return []; }),
+        Published.index().catch(function () { return []; }),
+        Backend._cloudIndex()
+      ]).then(function (r) {
         var map = {};
         r[0].forEach(function (q) { map[q.id] = metaOf(q, 'local'); });
+        (r[2] || []).forEach(function (m) {
+          if (!m || !m.id) return;
+          if (!map[m.id]) map[m.id] = Object.assign({ _src: 'cloud' }, m);
+        });
         (r[1] || []).forEach(function (m) {
           if (!m || !m.id) return;
           if (!map[m.id]) map[m.id] = Object.assign({ _src: 'published' }, m);
           else map[m.id]._src = 'both';
-        });
-        (r[2] || []).forEach(function (m) {
-          if (!m || !m.id) return;
-          if (!map[m.id]) map[m.id] = Object.assign({ _src: 'cloud' }, m);
         });
         return Object.keys(map).map(function (k) { return map[k]; })
           .sort(function (a, b) { return String(b.createdAt || '').localeCompare(String(a.createdAt || '')); });
       });
     },
 
+    /**
+     * 取一份試卷（完整內容）。依序嘗試：本機 → 雲端（直接取 key）→
+     * 雲端（掃描）→ 同步發佈的 repo 檔 → GitHub API。
+     * 會同時嘗試「原字串」與「解碼後」的 id，因為 location.hash 會把中文
+     * 試卷 id 轉成 percent-encoding，舊連結因此對不上。
+     */
     getQuiz: function (id) {
-      return Store.quiz.get(id).then(function (q) {
-        if (q) return q;
+      var ids = [id];
+      try {
+        var dec = decodeURIComponent(id);
+        if (dec !== id) ids.unshift(dec);
+      } catch (e) { /* 不是合法編碼就用原字串 */ }
+
+      function local(x) { return Store.quiz.get(x).catch(function () { return null; }); }
+
+      function cloud(x) {
+        if (!(Firebase.ok() || Hook.ok())) return Promise.resolve(null);
         if (Firebase.ok()) {
-          return Firebase.get('quizzes').then(function (o) {
-            var found = o && Object.keys(o).filter(function (k) { return o[k] && o[k].id === id; })[0];
-            return found ? o[found] : Published.quiz(id);
-          });
+          return Firebase.get('quizzes/' + safeKey(x)).catch(function () { return null; })
+            .then(function (q) { return q && q.id ? q : null; });
         }
-        return Published.quiz(id);
-      }).catch(function () { return Published.quiz(id); });
+        return Cloud.get('quiz', recId('quiz', x))
+          .then(function (r) { return r ? (r.payload || r) : null; }).catch(function () { return null; });
+      }
+
+      function cloudScan(x) {
+        if (!Firebase.ok()) return Promise.resolve(null);
+        return Firebase.get('quizzes').then(function (o) {
+          if (!o) return null;
+          var found = Object.keys(o).filter(function (k) { return o[k] && (o[k].id === x); })[0];
+          return found ? o[found] : null;
+        }).catch(function () { return null; });
+      }
+
+      function repo(x) { return Published.quiz(x).catch(function () { return null; }); }
+
+      function ghRead(x) {
+        if (!GitHub.ok()) return Promise.resolve(null);
+        var base = (Settings.get().gh.path || 'data') + '/quizzes';
+        return GitHub.readJSON(base + '/' + x + '.json', null).catch(function () { return null; });
+      }
+
+      /* 順序刻意由「便宜」到「昂貴」：本機 → 雲端單筆 → repo 單檔 →
+         GitHub API 單檔 → 最後才掃整個雲端節點（會抓一大包，只當保險）。 */
+      var chain = Promise.resolve(null);
+      ids.forEach(function (x) {
+        chain = chain
+          .then(function (q) { return q || local(x); })
+          .then(function (q) { return q || cloud(x); })
+          .then(function (q) { return q || repo(x); })
+          .then(function (q) { return q || ghRead(x); })
+          .then(function (q) { return q || cloudScan(x); });
+      });
+      return chain.then(function (q) { return q || null; });
     },
 
     saveQuiz: function (quiz) { return Store.quiz.save(quiz).then(function () { return quiz; }); },
 
     publishQuiz: function (quiz) {
       var jobs = [];
-      if (Firebase.ok()) jobs.push(Firebase.put('quizzes/' + safeKey(quiz.id), quiz));
+      /* Firebase：同時寫試卷本體與清單，學生端才找得到（清單是學生列試卷的來源） */
+      if (Firebase.ok()) {
+        jobs.push(Firebase.put('quizzes/' + safeKey(quiz.id), quiz).then(function () {
+          return Firebase.get('quizzesIndex').catch(function () { return null; }).then(function (idx) {
+            idx = Array.isArray(idx) ? idx.slice() : [];
+            var m = metaOf(quiz, 'cloud');
+            var i = idx.findIndex(function (x) { return x && x.id === quiz.id; });
+            if (i >= 0) idx[i] = m; else idx.push(m);
+            return Firebase.put('quizzesIndex', idx);
+          });
+        }));
+      }
       if (GitHub.ok()) {
         var base = (Settings.get().gh.path || 'data') + '/quizzes';
         jobs.push(GitHub.readJSON(base + '/index.json', []).then(function (idx) {
@@ -671,6 +746,90 @@
         merged.id = loc.id;
         merged.submittedAt = loc.submittedAt || cloud.submittedAt;
         return merged;
+      });
+    },
+
+    /**
+     * 某學生的所有作答（本機 + 雲端合併）。
+     * 學生專區本來只讀本機，換裝置就看不到自己的作答與生詞本，
+     * 這裡把雲端（老師批改過的）一起併進來，同一份取「較新／已批改」者。
+     */
+    mySubmissions: function (studentId) {
+      return Promise.all([
+        Store.submission.ofStudent(studentId).catch(function () { return []; }),
+        Cloud.getAll('submission').catch(function () { return []; })
+      ]).then(function (r) {
+        var map = {};
+        function add(s) {
+          if (!s || !s.id || !s.quizId) return;
+          if (s.studentId != null && String(s.studentId) !== String(studentId)) return;
+          var cur = map[s.id];
+          if (!cur) { map[s.id] = s; return; }
+          var newer = String(s.submittedAt || '') >= String(cur.submittedAt || '') ? s : cur;
+          var older = newer === s ? cur : s;
+          var merged = Object.assign({}, older, newer);
+          merged.answers = Object.assign({}, older.answers || {}, newer.answers || {});
+          merged.marks = (newer.marks || []).length ? newer.marks : (older.marks || []);
+          merged.vocab = (newer.vocab || []).length ? newer.vocab : (older.vocab || []);
+          merged.notes = (newer.notes || []).length ? newer.notes : (older.notes || []);
+          if (older.score || newer.score) merged.score = Object.assign({}, older.score, newer.score);
+          merged.id = cur.id;
+          map[s.id] = merged;
+        }
+        (r[0] || []).forEach(add);
+        (r[1] || []).forEach(function (rec) { add(rec && (rec.payload || rec)); });
+        return Object.keys(map).map(function (k) { return map[k]; })
+          .sort(function (a, b) { return String(b.submittedAt || '').localeCompare(String(a.submittedAt || '')); });
+      });
+    },
+
+    /**
+     * 某學生的作答草稿（本機 kv + 雲端）。
+     * 學生在作答途中按「加入生詞本」，此時還沒有 submission，
+     * 生詞只存在草稿裡 —— 要讀草稿才看得到。
+     */
+    myDrafts: function (studentId) {
+      var loc = Store.all('kv').catch(function () { return []; }).then(function (rows) {
+        var suffix = ':' + studentId;
+        return (rows || []).filter(function (r) {
+          return r && /^draft:/.test(String(r.id || '')) && String(r.id).slice(-suffix.length) === suffix && r.value;
+        }).map(function (r) { return r.value; });
+      });
+      var cloud = Cloud.getAll('draft').catch(function () { return []; }).then(function (list) {
+        return (list || []).map(function (rec) { return rec && (rec.payload || rec); })
+          .filter(function (d) { return d && String(d.studentId) === String(studentId); });
+      });
+      return Promise.all([loc, cloud]).then(function (r) {
+        var map = {};
+        (r[0] || []).concat(r[1] || []).forEach(function (d) {
+          if (!d || !d.quizId) return;
+          var k = d.quizId;
+          if (!map[k] || String(d.savedAt || '') > String(map[k].savedAt || '')) map[k] = d;
+        });
+        return Object.keys(map).map(function (k) { return map[k]; });
+      });
+    },
+
+    /** 生詞本：合併「已提交」與「作答中草稿」收集到的生詞（雲端一起） */
+    myVocab: function (studentId) {
+      return Promise.all([
+        Backend.mySubmissions(studentId).catch(function () { return []; }),
+        Backend.myDrafts(studentId).catch(function () { return []; })
+      ]).then(function (r) {
+        var map = {};
+        function eat(list) {
+          (list || []).forEach(function (s) {
+            ((s && s.vocab) || []).forEach(function (v) {
+              if (!v || !U.trim(v.word || '')) return;
+              var w = U.trim(v.word);
+              if (!map[w]) map[w] = Object.assign({}, v, { word: w });
+              else if (!map[w].note && v.note) map[w].note = v.note;
+            });
+          });
+        }
+        eat(r[0]); eat(r[1]);
+        return Object.keys(map).map(function (k) { return map[k]; })
+          .sort(function (a, b) { return String(b.ts || '').localeCompare(String(a.ts || '')); });
       });
     },
 

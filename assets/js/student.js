@@ -385,7 +385,16 @@
 
     /* 選擇欄：某欄在「所有」資料列都是 ○／空白（學生版未畫圈）才算，
        否則一律照原表還原 —— 這樣才不會把填充表誤判成勾選表而吃掉內容。 */
-    var nCols = rows.reduce(function (m, r) { return Math.max(m, r.length); }, 0);
+    function rowGridW(row) {                       // 這一列佔幾個「欄」（合併格算多欄）
+      var n = 0;
+      (row || []).forEach(function (c) { if (!c || c.vmerge === 'continue') return; n += (c.span || 1); });
+      return n;
+    }
+    var nCols = rows.reduce(function (m, r) { return Math.max(m, rowGridW(r)); }, 0);
+    /* 有些原卷的列少畫了格子（作者按 Tab 不齊）→ 補空白格，欄位才對得齊表頭 */
+    function padRow(tr, cols) {
+      for (var k = nCols - cols; k > 0; k--) tr.appendChild(U.el('td.pad', { html: '&nbsp;' }));
+    }
     var optCols = [];
     if (headIdx >= 0 && dataRows.length) {
       for (var ci = 1; ci < nCols; ci++) {
@@ -399,19 +408,22 @@
       return _cleanOpt(t) || String.fromCharCode(65 + Math.max(0, ci - 1));
     }
 
-    var tbl = U.el('table.qtable' + (tick ? '.grid' : ''));
+    var tbl = U.el('table.qtable' + (tick ? '.qtick' : ''));   /* 不可用 .grid：
+       那是版面用的 display:grid，套在 table 上會破壞欄位對齊 */
 
     /* 表頭列 —— 第一格（表頭欄的標題，如「引文」「片段」「事物」）也要畫出來 */
     if (headIdx >= 0) {
-      var htr = U.el('tr');
+      var htr = U.el('tr'), hUsed = 0;
       rows[headIdx].forEach(function (c, ci) {
         if (c && c.vmerge === 'continue') return;
         var th = U.el('th');
         if (tick && ci > 0) th.appendChild(U.el('span.optlbl', { text: optLabel(ci) }));
         else th.innerHTML = _cellInner(c) || '&nbsp;';
         if (c && (c.span || 1) > 1) th.setAttribute('colspan', String(c.span));
+        hUsed += (c && c.span) || 1;
         htr.appendChild(th);
       });
+      padRow(htr, hUsed);
       tbl.appendChild(htr);
     }
 
@@ -430,9 +442,10 @@
       }
       if (tickKey && rowSubs.length === 1) used[rowSubs[0].id] = true;
 
-      var tr = U.el('tr');
+      var tr = U.el('tr'), rUsed = 0;
       row.forEach(function (cell, ci) {
         if (cell && cell.vmerge === 'continue') return;
+        rUsed += (cell && cell.span) || 1;
         var s = subAt[ri + '_' + ci];
         if (s) used[s.id] = true;
 
@@ -455,6 +468,7 @@
         _fillCell(td, cell, s ? s.id : (q.id + '_r' + ri + 'c' + ci), sub, opts);
         tr.appendChild(td);
       });
+      padRow(tr, rUsed);
       tbl.appendChild(tr);
     });
     wrap.appendChild(tbl);

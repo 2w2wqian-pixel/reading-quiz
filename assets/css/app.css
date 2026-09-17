@@ -303,7 +303,7 @@ table.tbl tr:nth-child(even) td{background:#FFFDF7}
 
 /* 表格題：忠實還原成可填寫的表格 */
 .qtable-wrap{margin-top:10px;overflow-x:auto}
-table.qtable{border-collapse:collapse;width:100%;background:#FFFDF8;border:2px solid var(--line);border-radius:var(--r-sm);overflow:hidden}
+table.qtable{display:table;table-layout:auto;border-collapse:collapse;width:100%;background:#FFFDF8;border:2px solid var(--line);border-radius:var(--r-sm);overflow:hidden}
 table.qtable th,table.qtable td{
   border:1px solid var(--line);padding:8px 10px;vertical-align:middle;font-size:14.5px;line-height:1.6;
 }
@@ -312,7 +312,7 @@ table.qtable td .input.cell{width:100%;min-width:80px;box-sizing:border-box;font
 table.qtable td textarea.input{width:100%;box-sizing:border-box}
 table.qtable.tfng td.qt-stmt{font-weight:600}
 table.qtable.tfng td.qt-ans,table.qtable td.qt-ans{width:42%;min-width:160px}
-table.qtable.grid td,table.qtable.grid th{text-align:center}
+table.qtable.qtick td,table.qtable.qtick th{text-align:center}
 label.optcell{display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:4px}
 label.optcell input{margin:0}
 /* 判斷題：左敘述、右三個選項（橫向） */

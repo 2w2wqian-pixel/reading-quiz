@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>ALIGN_INIT</title>
+<link rel="stylesheet" href="../assets/css/app.css">
+</head>
+<body>
+<div id="view" style="width:860px"></div>
+<script src="../assets/js/lib/jszip.min.js"></script>
+<script src="../assets/js/core/util.js"></script>
+<script src="../assets/js/core/crypto.js"></script>
+<script src="../assets/js/core/store.js"></script>
+<script src="../assets/js/core/backend.js"></script>
+<script src="../assets/js/core/docx-parser.js"></script>
+<script src="../assets/js/ui/highlighter.js"></script>
+<script src="../assets/js/student.js"></script>
+<script>
+/* 表格「欄位對齊」檢查（需要真實排版引擎，所以只能在瀏覽器跑）。
+   對每一題表格：逐列量每個格子的 left 座標，只要有一列的格子起點與第一列不同
+   就代表欄位沒對齊（常見原因：class 撞到 layout 用的 display:grid/flex）。 */
+function wait(ms){return new Promise(function(r){setTimeout(r,ms);});}
+function report(lines){
+  var bad = lines.filter(function(l){ return l.indexOf('❌') >= 0; }).length;
+  document.title = 'ALIGN ' + (bad ? 'FAIL(' + bad + ')' : 'OK');
+  var pre = document.createElement('pre'); pre.id = 'result';
+  pre.textContent = lines.join('\n');
+  document.body.appendChild(pre);
+  var line = 'START::N' + lines.length + '::' + lines.map(function(l){
+    return '||' + (l.indexOf('❌') >= 0 ? 'FAIL' : 'PASS') + '::' + l;
+  }).join('') + 'END';
+  (new Image()).src = '/__align?r=' + encodeURIComponent(line) + '&n=' + Math.random();
+}
+(async function(){
+  var out = [];
+  try {
+    var file = new URLSearchParams(location.search).get('f') || 'sample.docx';
+    var res = await fetch(file);
+    if (!res.ok) throw new Error('找不到 ' + file + ' (' + res.status + ')');
+    var r = await RQ.docx.parse(await res.arrayBuffer(), { fileName: file });
+    var host = document.getElementById('view');
+    var tables = 0;
+    r.questions.forEach(function(q){
+      if (q.type !== 'table' || !q.table || !(q.table.rows || []).length) return;
+      var box = document.createElement('div'); box.style.width = '820px';
+      host.appendChild(box);
+      box.appendChild(RQ.forms.input(q, {}, {}));
+      var tbl = box.querySelector('table.qtable');
+      if (!tbl || !tbl.rows.length) { box.remove(); return; }
+      tables++;
+      /* 判準（合併儲存格不算不對齊）：
+         A. 每一列的格子必須從表格左緣排到右緣 —— 若表格被 layout 用的 display:grid/flex
+            蓋掉，每一列會各自排版，表頭列就會明顯短於資料列（這正是之前的 bug）。
+         B. 每一列佔的「欄數」（colspan 總和）必須等於表格最大欄數 —— 少格子的列要補齊。 */
+      function gridW(tr){
+        var n = 0;
+        for (var i = 0; i < tr.children.length; i++) n += parseInt(tr.children[i].getAttribute('colspan') || '1', 10) || 1;
+        return n;
+      }
+      var tRect = tbl.getBoundingClientRect();
+      var maxW = 0;
+      Array.prototype.forEach.call(tbl.rows, function(tr){ maxW = Math.max(maxW, gridW(tr)); });
+      var ok = true, detail = '';
+      Array.prototype.forEach.call(tbl.rows, function(tr, ri){
+        var cs = tr.children;
+        if (!cs.length) return;
+        var l = cs[0].getBoundingClientRect().left, r = cs[cs.length - 1].getBoundingClientRect().right;
+        var full = Math.abs(l - tRect.left) < 4 && Math.abs(r - tRect.right) < 4;
+        var cols = gridW(tr) === maxW;
+        if (!full || !cols) {
+          ok = false;
+          if (!detail) detail = 'row' + ri + '（寬 ' + Math.round(r - l) + '/' + Math.round(tRect.width)
+            + '，欄 ' + gridW(tr) + '/' + maxW + '）';
+        }
+      });
+      var heads = Array.prototype.map.call(tbl.rows[0].children, function(c){
+        var s = document.createElement('div'); s.innerHTML = c.innerHTML;
+        return (s.textContent || '').trim().slice(0, 6) || '·';
+      }).join(' | ');
+      out.push((ok ? 'PASS ' : '❌ ') + 'Q' + q.no + '（' + tbl.rows.length + '列・' + maxW + '欄・'
+        + getComputedStyle(tbl).display + '）表頭：' + heads + (ok ? '' : '　不對齊：' + detail));
+      box.remove();
+    });
+    out.unshift('檔案 ' + file + '：共 ' + tables + ' 張表格');
+    report(out);
+  } catch (e) {
+    report(out.concat(['FATAL ' + (e && e.message || e)]));
+  }
+})();
+</script>
+</body>
+</html>

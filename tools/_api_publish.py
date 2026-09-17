@@ -1,16 +1,33 @@
-# 用 GitHub Git Data API 把本機 HEAD commit 原樣送上遠端
-# （沙箱的 git push 極慢／會卡住，改走 REST API；並重建「完全相同」的 commit，
-#   這樣遠端 sha 會等於本機 sha，兩邊不需要再 fetch 對齊。）
-import base64, json, re, subprocess, sys, urllib.request, urllib.error
+# 用 GitHub Git Data API 把「本機目前的檔案內容」發佈成遠端 main 的新 commit。
+#
+# 為什麼需要它：沙箱的 git push 有時會卡住十幾分鐘甚至完全沒反應，
+# 這條路走 REST API（blob → tree → commit → 更新 ref），通常幾秒完成。
+#
+# 設計重點：
+#  1. 以「遠端 tree」為 base，比對「本機 tree」，只送有差異的檔案
+#     （不是只看最後一個 commit 的 diff —— 否則中間沒推成功的 commit 會漏掉）。
+#  2. 比對的是 blob sha，所以 CRLF/換行差異不會造成假變更。
+#  3. 安全鎖：若遠端 data/ 底下有本機沒同步的內容（老師在瀏覽器剛發佈的試卷），
+#     一律中止，避免覆蓋掉老師的資料。
+#  4. 沿用本機 HEAD 的 author/committer/時間與訊息，重建出「完全相同」的 commit；
+#     若遠端就在本機 parent 上，產生的 sha 會與本機一致（兩邊不分歧）。
+#
+# 用法：python tools/_api_publish.py <TOKEN> [--force-base]
+#   --force-base：允許遠端已前進時仍發佈（仍會通過 data/ 安全鎖）
+import base64, json, re, subprocess, sys, urllib.error, urllib.request
 from datetime import datetime, timedelta, timezone
 
 TOKEN = sys.argv[1]
+FORCE = '--force-base' in sys.argv
 OWNER, REPO, BRANCH = '2w2wqian-pixel', 'reading-quiz', 'main'
 API = 'https://api.github.com'
 
 
 def sh(*args):
-    return subprocess.run(args, capture_output=True, check=True).stdout
+    r = subprocess.run(args, capture_output=True)
+    if r.returncode:
+        print('git 失敗:', args, r.stderr.decode()[:300]); sys.exit(1)
+    return r.stdout
 
 
 def api(method, path, body=None):
@@ -28,20 +45,28 @@ def api(method, path, body=None):
         print('HTTP', e.code, path, e.read().decode()[:400]); raise
 
 
-def read_file(path):
-    """檔案內容 → 送回傳值（用 git cat-file，確保位元組與 repo 內一致，CRLF/LF 不會跑掉）"""
-    out = sh('git', 'cat-file', 'blob', 'HEAD:' + path)
-    return base64.b64encode(out).decode()
+def local_tree_map():
+    """本機 HEAD 的 [路徑] = blob sha（用 -z 避免非 ASCII 檔名被轉義）"""
+    out = {}
+    for chunk in [c for c in sh('git', 'ls-tree', '-r', '-z', 'HEAD').decode('utf-8').split('\0') if c]:
+        meta, path = chunk.split('\t', 1)
+        out[path] = meta.split(' ')[2]
+    return out
+
+
+def remote_tree_map(tree_sha):
+    rt = api('GET', '/repos/%s/%s/git/trees/%s?recursive=1' % (OWNER, REPO, tree_sha))
+    return {e['path']: e['sha'] for e in rt.get('tree', []) if e['type'] == 'blob'}
+
+
+def blob_b64(path):
+    return base64.b64encode(sh('git', 'cat-file', 'blob', 'HEAD:' + path)).decode()
 
 
 def main():
     head = sh('git', 'rev-parse', 'HEAD').decode().strip()
-    tree = sh('git', 'rev-parse', 'HEAD^{tree}').decode().strip()
-    parent = sh('git', 'rev-parse', 'HEAD^').decode().strip()
-    raw = sh('git', 'cat-file', 'commit', 'HEAD').decode('utf-8', 'replace')
-    message = raw.split('\n\n', 1)[1]
+    raw = sh('git', 'cat-file', 'commit', 'HEAD').decode('utf-8')
 
-    # 一定要沿用本機 commit 的 author/committer/時間，重建出來的 sha 才會相同
     def ident(line):
         m = re.match(r'^(?:author|committer)\s+(.*?)\s+<([^>]*)>\s+(\d+)\s+([+-]\d{4})$', line)
         if not m:
@@ -49,62 +74,66 @@ def main():
         name, mail, epoch, tz = m.group(1), m.group(2), int(m.group(3)), m.group(4)
         sign = 1 if tz[0] == '+' else -1
         offset = timedelta(hours=int(tz[1:3]), minutes=int(tz[3:5])) * sign
-        date = datetime.fromtimestamp(epoch, timezone(offset)).isoformat()
-        return {'name': name, 'email': mail, 'date': date}
+        return {'name': name, 'email': mail,
+                'date': datetime.fromtimestamp(epoch, timezone(offset)).isoformat()}
 
     lines = raw.split('\n')
-    my_author = ident([l for l in lines if l.startswith('author ')][0])
-    my_committer = ident([l for l in lines if l.startswith('committer ')][0])
-    author, committer = my_author, my_committer
-    # 變更檔案＝與 parent 的 diff。
-    # 用 -z（NUL 分隔）解析：非 ASCII 檔名在一般輸出會被 git 用 C 式八進位轉義
-    # （"data/quizzes/\344\270\255..."），直接拿去 git cat-file 會失敗。
-    parts = [x for x in sh('git', 'diff', '--name-status', '-z', parent, head).decode('utf-8').split('\0') if x]
-    files = []
-    i = 0
-    while i < len(parts):
-        st = parts[i]; i += 1
-        if st[:1] in ('R', 'C'):                 # 改名／複製：old new
-            path = parts[i + 1]; i += 2
-            files.append((path, read_file(path)))
-        elif st[:1] == 'D':                      # 刪除
-            files.append((parts[i], None)); i += 1
-        else:
-            path = parts[i]; i += 1
-            files.append((path, read_file(path)))
-    print('變更檔案:', [f[0] for f in files])
+    author = ident([l for l in lines if l.startswith('author ')][0])
+    committer = ident([l for l in lines if l.startswith('committer ')][0])
+    message = raw.split('\n\n', 1)[1]
 
     ref = api('GET', '/repos/%s/%s/git/ref/heads/%s' % (OWNER, REPO, BRANCH))
     base = ref['object']['sha']
-    print('遠端 main =', base[:8], '（本機 parent =', parent[:8], '）')
-    if base != parent and '--force-base' not in sys.argv:
-        print('!! 遠端已前進，中止（請先人工處理；確定要用本機內容覆蓋可用 --force-base）'); sys.exit(2)
-
-    tree_entries = []
-    for path, content in files:
-        if content is None:
-            # 刪除檔案：Git Data API 用 sha=null 表示刪掉這個路徑
-            tree_entries.append({'path': path, 'mode': '100644', 'type': 'blob', 'sha': None})
-            continue
-        blob = api('POST', '/repos/%s/%s/git/blobs' % (OWNER, REPO),
-                   {'content': content, 'encoding': 'base64'})
-        tree_entries.append({'path': path, 'mode': '100644', 'type': 'blob', 'sha': blob['sha']})
     base_tree = api('GET', '/repos/%s/%s/git/commits/%s' % (OWNER, REPO, base))['tree']['sha']
+
+    remote, local = remote_tree_map(base_tree), local_tree_map()
+    print('遠端 main =', base[:8], '| 本機 HEAD =', head[:8])
+
+    # ---- 安全鎖：data/ 底下遠端有的，本機一定要有且相同 ----
+    bad = [p for p in remote if p.startswith('data/') and remote[p] != local.get(p)]
+    if bad:
+        print('!! 遠端 data/ 有本機沒同步的內容（老師剛發佈的試卷？），中止以免覆蓋：')
+        for p in bad[:10]:
+            print('   ', p)
+        print('   → 請先把 data/ 同步下來再發佈。')
+        sys.exit(3)
+
+    if not FORCE and base != sh('git', 'rev-parse', 'HEAD^').decode().strip():
+        # 遠端不在本機 parent 上：照樣可以發佈（用遠端 tree 當 base），但提醒一下
+        print('（提醒）遠端不在本機 parent 上，將以遠端 tree 為基底更新差異檔案')
+
+    changed = [p for p in local if remote.get(p) != local[p]]
+    removed = [p for p in remote if p not in local and not p.startswith('data/')]
+    print('要更新 %d 個檔案，刪除 %d 個：' % (len(changed), len(removed)))
+    for p in sorted(changed)[:20]:
+        print('   M', p)
+    for p in sorted(removed)[:10]:
+        print('   D', p)
+
+    entries = []
+    for p in changed:
+        blob = api('POST', '/repos/%s/%s/git/blobs' % (OWNER, REPO),
+                   {'content': blob_b64(p), 'encoding': 'base64'})
+        entries.append({'path': p, 'mode': '100644', 'type': 'blob', 'sha': blob['sha']})
+    for p in removed:
+        entries.append({'path': p, 'mode': '100644', 'type': 'blob', 'sha': None})
+
     new_tree = api('POST', '/repos/%s/%s/git/trees' % (OWNER, REPO),
-                   {'base_tree': base_tree, 'tree': tree_entries})
-    print('新 tree =', new_tree['sha'][:8], '（本機 tree =', tree[:8], '）',
-          'OK' if new_tree['sha'] == tree else '不同（不影響內容，但 sha 會不一樣）')
+                   {'base_tree': base_tree, 'tree': entries})
+    local_top = sh('git', 'rev-parse', 'HEAD^{tree}').decode().strip()
+    print('新 tree =', new_tree['sha'][:8], '| 本機 tree =', local_top[:8],
+          '✅ 一致' if new_tree['sha'] == local_top else '（不同：遠端還有本機沒有的檔案，例如老師的 data/）')
 
     commit = api('POST', '/repos/%s/%s/git/commits' % (OWNER, REPO),
                  {'message': message, 'tree': new_tree['sha'], 'parents': [base],
                   'author': author, 'committer': committer})
-    print('新 commit =', commit['sha'][:8], '（本機 =', head[:8], '）',
-          '相同 ✅' if commit['sha'] == head else '不同（內容相同即可）')
+    print('新 commit =', commit['sha'][:8], '| 本機 =', head[:8],
+          '✅ 相同' if commit['sha'] == head else '（內容相同即可）')
 
     api('PATCH', '/repos/%s/%s/git/refs/heads/%s' % (OWNER, REPO, BRANCH),
         {'sha': commit['sha'], 'force': False})
     now = api('GET', '/repos/%s/%s/commits/%s' % (OWNER, REPO, BRANCH))
-    print('遠端 main 現在 =', now['sha'][:8], '|', now['commit']['message'].split('\n')[0][:40])
+    print('遠端 main 現在 =', now['sha'][:8], '|', now['commit']['message'].split('\n')[0][:44])
 
 
 main()

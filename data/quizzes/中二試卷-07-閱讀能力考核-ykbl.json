@@ -4,7 +4,7 @@
   "level": "中二",
   "source": "K5E_QB_F2_R07.docx",
   "createdAt": "2026-09-17T14:11:35.649Z",
-  "updatedAt": "2026-09-17T14:14:53.170Z",
+  "updatedAt": "2026-09-17T14:43:19.498Z",
   "published": true,
   "passages": [
     {
@@ -388,7 +388,7 @@
       "explanation": "",
       "passageId": "p1",
       "id": "q1",
-      "skip": true,
+      "skip": false,
       "skipReason": "段落劃分／概括題"
     },
     {
@@ -1656,6 +1656,13 @@
           "answer": "（2分）",
           "marks": 2,
           "kind": "fill"
+        },
+        {
+          "id": "q16_s4",
+          "label": "(2)你是否認同（加以說明）",
+          "prompt": "",
+          "answer": "",
+          "marks": 0
         }
       ],
       "table": {

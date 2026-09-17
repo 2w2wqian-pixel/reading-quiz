@@ -50,20 +50,5 @@
     "published": true,
     "assignment": null,
     "_src": "published"
-  },
-  {
-    "id": "2526-p-5-第一段測試卷-數學-x02m",
-    "title": "2526 P.5 第一段測試卷-數學",
-    "level": "小五",
-    "source": "2526 P.5 第一段測試卷-數學.pdf",
-    "subject": "數學",
-    "format": "pdf-image",
-    "questionCount": 8,
-    "totalMarks": 0,
-    "passageCount": 0,
-    "createdAt": "2026-09-17T16:02:21.214Z",
-    "published": true,
-    "assignment": null,
-    "_src": "published"
   }
 ]

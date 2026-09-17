@@ -1,16 +1,5 @@
 [
   {
-    "id": "demo-f2-r-t01",
-    "title": "中二學期試卷(01)閱讀能力考核",
-    "level": "中二",
-    "source": "K5E_QB_F2_R_T01.docx",
-    "questionCount": 16,
-    "totalMarks": 60,
-    "passageCount": 2,
-    "createdAt": "2026-09-16T14:00:20.210Z",
-    "published": true
-  },
-  {
     "id": "中二學期試卷-02-閱讀能力考核-p1ck",
     "title": "中二學期試卷(02)閱讀能力考核",
     "level": "中二",

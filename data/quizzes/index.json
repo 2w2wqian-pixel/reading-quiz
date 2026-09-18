@@ -52,21 +52,6 @@
     "_src": "published"
   },
   {
-    "id": "assessment-task-for-reading-eq9i",
-    "title": "Assessment Task for Reading",
-    "level": "中三",
-    "source": "3_Assessment_Task_reading_What_is_our_next_direction_in_life.docx",
-    "subject": "英文",
-    "format": "docx",
-    "questionCount": 21,
-    "totalMarks": 43,
-    "passageCount": 1,
-    "createdAt": "2026-09-17T17:12:07.542Z",
-    "published": true,
-    "assignment": null,
-    "_src": "published"
-  },
-  {
     "id": "中二試卷-08-閱讀能力考核-kj5h",
     "title": "中二試卷(08)閱讀能力考核",
     "level": "中二",

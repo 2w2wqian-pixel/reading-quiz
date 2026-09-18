@@ -11,6 +11,50 @@
   var U = RQ.util;
   var COLORS = ['yellow', 'green', 'blue', 'pink', 'orange'];
 
+  /** 是否為觸控裝置（手機／平板）——決定選單要用浮動或固定在底部 */
+  function isCoarse() {
+    return !!(window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
+  }
+
+  /** 複製文字：優先用 Clipboard API，失敗才退回 execCommand */
+  function legacyCopy(text) {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;top:-1000px;left:-1000px;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      var ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) { return false; }
+  }
+
+  function copyText(text) {
+    function done() { U.toast('已複製', 'ok'); }
+    if (!text) { U.toast('沒有可複製的內容', 'bad'); return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(function () {
+        if (legacyCopy(text)) done(); else U.toast('複製失敗', 'bad');
+      });
+    } else if (legacyCopy(text)) {
+      done();
+    } else {
+      U.toast('複製失敗', 'bad');
+    }
+  }
+
+  /** 收合選取：可同時讓系統原生選取選單消失（iOS／Android 用） */
+  function collapseSelection() {
+    try {
+      var s = window.getSelection();
+      if (s && !s.isCollapsed) s.removeAllRanges();
+    } catch (e) { }
+  }
+
+
   /**
    * 計算 node/offset 在容器 root（.ptext）內的字元位移。
    * 用 Range 量「從頭到選取端點」的文字長度，對文字節點或元素節點都精準，
@@ -120,12 +164,36 @@
     var onUp = function () { setTimeout(function () { self._onSelect(); }, 10); };
     this.container.addEventListener('mouseup', onUp);
     this.container.addEventListener('touchend', onUp);
-    document.addEventListener('mousedown', function (e) {
+
+    var hideTimer = null;
+
+    function hideIfOutside(e) {
       var menu = document.getElementById('sel-menu');
       if (!menu || menu.hidden) return;
-      if (menu.contains(e.target)) return;
+      if (menu.contains(e.target)) return;      /* 點自己的按鈕不關 */
       menu.hidden = true;
+    }
+    document.addEventListener('mousedown', hideIfOutside);
+    document.addEventListener('touchstart', hideIfOutside, { passive: true });
+
+    /* 選取消失就關閉選單。觸控時延遲一下再關：
+       在 iOS 上點按鈕會先讓選取收合，若立刻 display:none，click 會收不到。 */
+    document.addEventListener('selectionchange', function () {
+      var menu = document.getElementById('sel-menu');
+      if (!menu || menu.hidden) return;
+      var s = window.getSelection();
+      if (!s || s.isCollapsed) {
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(function () { menu.hidden = true; }, isCoarse() ? 280 : 0);
+      }
     });
+
+    /* 捲動時浮動選單會跟選取位置脫節 → 收起（固定在底部的話不需處理） */
+    window.addEventListener('scroll', function () {
+      var menu = document.getElementById('sel-menu');
+      if (!menu || menu.hidden) return;
+      if (!menu.classList.contains('dock')) menu.hidden = true;
+    }, true);
   };
 
   Highlighter.prototype._onSelect = function () {
@@ -176,10 +244,44 @@
     if (!menu) return;
     var rect = range.getBoundingClientRect();
     menu.hidden = false;
-    var top = rect.bottom + window.scrollY + 8;
-    var left = Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - 250));
-    menu.style.top = top + 'px';
-    menu.style.left = left + 'px';
+
+    /* 選單定位策略
+       ─ 觸控裝置：固定貼齊畫面底部。系統原生的選取選單（拷貝／全選／查詢）
+         只會出現在「選取處附近」，而它是瀏覽器／系統層的 UI，**z-index 再高
+         也蓋不過它**。把它移離選取處才是最可靠的做法。
+       ─ 桌面：維持貼近選取處，但加上翻轉與邊界夾制，避免超出畫面被裁掉。 */
+    if (isCoarse()) {
+      menu.classList.add('dock');
+      menu.style.top = '';
+      menu.style.left = '';
+    } else {
+      menu.classList.remove('dock');
+      var vw = window.innerWidth, vh = window.innerHeight;
+      var mw = menu.offsetWidth || menu.getBoundingClientRect().width || 230;
+      var mh = menu.offsetHeight || menu.getBoundingClientRect().height || 0;
+
+      /* 先試選取處下方；放不下就翻到上方；再放不下就夾在畫面內。
+         夾制要在「所有情況」都做，否則選取落在畫面下緣時仍會超出。 */
+      function placeTop(h) {
+        var t = rect.bottom + 8;
+        if (t + h > vh - 8) {
+          var above = rect.top - 8 - h;
+          t = (above > 8) ? above : (vh - h - 8);
+        }
+        return Math.max(8, Math.min(t, Math.max(8, vh - h - 8)));
+      }
+      menu.style.top = (placeTop(mh) + window.scrollY) + 'px';
+      menu.style.left = Math.max(8, Math.min(rect.left + window.scrollX, vw - mw - 8)) + 'px';
+
+      /* 剛從 hidden 切換成顯示時，某些瀏覽器第一次量到的高度是 0（還沒排版）。
+         下一個 frame 再校正一次，確保一定不會超出畫面。 */
+      if (!mh) {
+        window.requestAnimationFrame(function () {
+          if (menu.hidden || menu.classList.contains('dock')) return;
+          menu.style.top = (placeTop(menu.offsetHeight) + window.scrollY) + 'px';
+        });
+      }
+    }
     U.$('#sel-preview', menu).textContent = segs.map(function (s) { return s.text; }).join('…').slice(0, 60);
 
     var self = this;
@@ -189,8 +291,19 @@
       btn.onclick = function () {
         self._addMarks(btn.getAttribute('data-color'));
         menu.hidden = true;
+        if (isCoarse()) setTimeout(collapseSelection, 0);
       };
     });
+
+    /* 自有「複製」按鈕：因為觸控裝置上我們抑制了系統選單，複製要在這裡提供 */
+    var copyBtn = U.$('#sel-copy', root);
+    if (copyBtn) {
+      copyBtn.onclick = function () {
+        copyText(segs.map(function (s2) { return s2.text; }).join('\n'));
+        menu.hidden = true;
+        if (isCoarse()) setTimeout(collapseSelection, 0);
+      };
+    }
     U.$('#sel-note', root).onclick = function () {
       menu.hidden = true;
       self._askNote();

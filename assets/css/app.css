@@ -613,3 +613,48 @@ h1,h2,h3,h4{font-family:var(--font-ui);letter-spacing:.02em}
   .btn{padding:11px 16px;font-size:14px}
   .stat .n{font-size:20px}
 }
+
+/* ================================================================
+   選取快顯選單：避免與「系統原生選取選單」互相遮擋
+   ---------------------------------------------------------------
+   系統原生選單（拷貝／全選／查詢／翻譯）由瀏覽器或作業系統繪製，
+   屬於瀏覽器 UI 層，**HTML 的 z-index 再高也蓋不過它**。
+   因此策略是：
+     ① 觸控裝置：抑制閱讀區的原生選單（-webkit-touch-callout），
+        並在我們自己的選單提供「複製」按鈕，維持複製功能。
+     ② 觸控裝置：把選單固定在畫面底部，遠離「選取處附近」——
+        原生選單只會出現在選取處附近，兩者就不會重疊。
+     ③ 桌面：保有原生右鍵選單與 Ctrl+C，選單改為智慧翻轉。
+   ================================================================ */
+
+/* ① 閱讀區：觸控裝置抑制原生 callout（複製由我們的按鈕提供） */
+@media (pointer:coarse){
+  .passage,.passage *{-webkit-touch-callout:none}
+  .passage,.passage .ptext{-webkit-user-select:text;user-select:text}
+}
+
+/* ② 選單本體：對齊主題、提高層級 */
+.sel-menu{
+  z-index:3000;border:1px solid var(--line);border-radius:16px;padding:10px;
+  background:var(--paper);
+  box-shadow:0 1px 2px rgba(58,50,42,.04), 0 16px 36px -14px rgba(58,50,42,.22);
+}
+.sel-menu-row{gap:9px;margin-bottom:8px}
+.sw{width:30px;height:30px;border:1px solid rgba(58,50,42,.10);box-shadow:0 1px 2px rgba(58,50,42,.05)}
+.mini-btn{border:1px solid var(--line);background:var(--cream-2);border-radius:9px;
+  padding:5px 11px;font-size:12.5px}
+.mini-btn:hover{background:#EFE9DD}
+.mini-btn.danger{background:#F7EBE8;border-color:#E6CFC9;color:#9A5F57}
+.sel-menu-text{border-top:1px dashed var(--line);margin-top:7px}
+
+/* ③ 固定在畫面底部（觸控裝置）—— 離開選取處，永遠不與原生選單重疊 */
+.sel-menu.dock{
+  position:fixed;left:10px;right:10px;width:auto;max-width:none;
+  bottom:calc(10px + env(safe-area-inset-bottom,0px));
+  padding:12px;border-radius:18px;
+}
+.sel-menu.dock .sel-menu-row{gap:12px;margin-bottom:10px}
+.sel-menu.dock .sw{width:36px;height:36px}
+.sel-menu.dock .sel-menu-btns{gap:8px}
+.sel-menu.dock .mini-btn{padding:9px 13px;font-size:13.5px}
+.sel-menu.dock .sel-menu-text{max-height:34px}

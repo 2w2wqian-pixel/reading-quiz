@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>SELMENU TEST</title>
+<link rel="stylesheet" href="../assets/css/app.css">
+<style>body{padding:0} #spacer{height:520px}</style>
+</head>
+<body>
+<div id="toast-root" class="toast-root"></div>
+<div id="modal-root"></div>
+<div id="sel-menu" class="sel-menu" hidden>
+  <div class="sel-menu-row" id="sel-colors">
+    <button class="sw sw-y" data-color="yellow" title="黃色"></button>
+    <button class="sw sw-g" data-color="green"  title="綠色"></button>
+    <button class="sw sw-b" data-color="blue"   title="藍色"></button>
+    <button class="sw sw-p" data-color="pink"   title="粉紅"></button>
+    <button class="sw sw-o" data-color="orange" title="橘色"></button>
+  </div>
+  <div class="sel-menu-btns">
+    <button class="mini-btn" id="sel-copy">複製</button>
+    <button class="mini-btn" id="sel-note">加筆記</button>
+    <button class="mini-btn" id="sel-vocab">加入生詞本</button>
+    <button class="mini-btn danger" id="sel-clear">清除標示</button>
+  </div>
+  <div class="sel-menu-text" id="sel-preview"></div>
+</div>
+
+<div id="spacer"></div>
+<div class="passage" id="host">
+  <p data-pidx="0"><span class="ptext">第一段：這是一段用來測試選取快顯選單定位的文字內容。</span></p>
+  <p data-pidx="1"><span class="ptext">第二段：選取這裡的文字，選單應該出現在不會被裁切的位置。</span></p>
+</div>
+
+<script src="../assets/js/core/util.js"></script>
+<script src="../assets/js/ui/highlighter.js"></script>
+<script>
+var out = [];
+function log(s) { out.push(s); }
+function ck(label, ok, extra) { log((ok ? 'PASS  ' : 'FAIL  ') + label + (extra && !ok ? '  :: ' + extra : '')); }
+
+/* 假的 media query 結果（用來分別測「觸控裝置」與「桌面」） */
+var COARSE = true;
+window.matchMedia = function (q) {
+  var coarse = /pointer\s*:\s*coarse/.test(q);
+  return { matches: coarse ? COARSE : !COARSE, media: q, addListener: function () { }, removeListener: function () { } };
+};
+
+/* 攔截複製（headless 沒有真實剪貼簿） */
+window.__copied = null;
+try {
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: function (t) { window.__copied = t; return Promise.resolve(); } }
+  });
+} catch (e) { log('（無法覆寫 clipboard：' + e.message + '）'); }
+
+var host = document.getElementById('host');
+var h = new RQ.Highlighter({
+  container: host,
+  passage: {
+    id: 'p1',
+    paragraphs: [
+      '第一段：這是一段用來測試選取快顯選單定位的文字內容。',
+      '第二段：選取這裡的文字，選單應該出現在不會被裁切的位置。'
+    ]
+  },
+  marks: [], vocab: [],
+  onChange: function () { }
+});
+
+var menu = document.getElementById('sel-menu');
+
+/* 注意：套用螢光筆後容器會重新渲染 DOM，舊的 <p> 參照會失效 →
+   每次都要重新查詢，否則選取會落在已脫離文件的節點上。 */
+function para(idx) { return document.querySelector('#host p[data-pidx="' + idx + '"]'); }
+function selectIn(idx, from, to) {
+  var p = para(idx);
+  var node = p.querySelector('.ptext');
+  var textNode = null, best = -1;
+  for (var i = 0; i < node.childNodes.length; i++) {
+    var c = node.childNodes[i];
+    if (c.nodeType === 3 && c.nodeValue.length > best) { best = c.nodeValue.length; textNode = c; }
+  }
+  if (!textNode) { best = node.textContent.length; textNode = node; }
+  from = Math.min(from, Math.max(0, best - 1));
+  to = Math.min(to, best);
+  var r = document.createRange();
+  r.setStart(textNode, from);
+  r.setEnd(textNode, to);
+  var sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(r);
+  window.__lastSelText = r.toString();
+  return r;
+}
+function selText(idx, from, to) {
+  var p = para(idx);
+  var t = p.querySelector('.ptext').textContent;
+  return t.slice(from, to);
+}
+function fire(ev) { host.dispatchEvent(new Event(ev, { bubbles: true })); }
+function wait(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+
+(async function () {
+ try {
+
+  /* ---------- A. 觸控裝置：選單固定在底部 ---------- */
+  COARSE = true;
+  menu.hidden = true; menu.classList.remove('dock');
+  selectIn(0, 4, 12);
+  fire('touchend');
+  await wait(120);
+  var cs = getComputedStyle(menu);
+  var r = menu.getBoundingClientRect();
+  ck('A: 觸控裝置選取後選單有顯示', menu.hidden === false);
+  ck('A: 選單加上 dock 類別', menu.classList.contains('dock'));
+  ck('A: 選單以 fixed 定位（脫離文件流、不受捲動影響）', cs.position === 'fixed', cs.position);
+  ck('A: 選單貼齊畫面底緣（距視窗底部 < 80px）',
+    window.innerHeight - r.bottom < 80, 'bottom=' + Math.round(window.innerHeight - r.bottom));
+  ck('A: 選單橫跨整個畫面寬度（底部工具列，不是貼著選取處的浮動方塊）',
+    r.left <= 14 && (window.innerWidth - r.right) <= 34,
+    'left=' + Math.round(r.left) + ' rightGap=' + Math.round(window.innerWidth - r.right));
+  ck('A: 選單高度遠小於畫面（不佔據閱讀區）', r.height < window.innerHeight * 0.4,
+    'h=' + Math.round(r.height));
+
+  /* ---------- B. 點顏色後：選取收合、原生選單一併消失 ---------- */
+  COARSE = true;
+  selectIn(0, 4, 12);
+  fire('touchend');
+  await wait(120);
+  document.querySelector('#sel-colors .sw').click();
+  await wait(120);
+  ck('B: 套用顏色後選單關閉', menu.hidden === true);
+  ck('B: 套用顏色後選取已收合（原生選單會一起消失）',
+    window.getSelection().isCollapsed === true);
+
+  /* ---------- C. 複製按鈕：功能仍可用 ---------- */
+  COARSE = true;
+  window.__copied = null;
+  selectIn(1, 2, 8);
+  fire('touchend');
+  await wait(120);
+  var btn = document.getElementById('sel-copy');
+  ck('C: 自我選單提供「複製」按鈕', !!btn);
+  btn.click();
+  await wait(150);
+  ck('C: 按下複製有把文字送進剪貼簿', !!window.__copied, String(window.__copied));
+  ck('C: 複製內容等於選取文字', window.__copied === selText(1, 2, 8),
+    JSON.stringify(window.__copied) + ' vs ' + JSON.stringify(selText(1, 2, 8)));
+
+  /* ---------- D. 桌面：維持浮動，且不出界 ---------- */
+  COARSE = false;
+  menu.hidden = true; menu.classList.remove('dock');
+  menu.style.top = ''; menu.style.left = '';
+  selectIn(1, 2, 8);          /* 靠近視窗底部的位置 */
+  fire('mouseup');
+  await wait(120);
+  var cs2 = getComputedStyle(menu);
+  var r2 = menu.getBoundingClientRect();
+  ck('D: 桌面重新選取後選單有顯示', menu.hidden === false);
+  ck('D: 桌面維持 absolute 浮動定位', cs2.position === 'absolute', cs2.position);
+  ck('D: 桌面選單未被畫面下緣裁切', r2.bottom <= window.innerHeight + 1,
+    'bottom=' + Math.round(r2.bottom) + ' vh=' + window.innerHeight);
+  ck('D: 桌面選單未被畫面上緣裁切', r2.top >= -1, 'top=' + Math.round(r2.top));
+  ck('D: 桌面不會被強制 dock', !menu.classList.contains('dock'));
+
+  /* ---------- E. 捲動時浮動選單收起 ---------- */
+  /* 注意：headless + --virtual-time-budget 下，實際捲動不會派送 scroll 事件
+     （實測 scrollEvents=0），所以在這裡明確派送一個合成事件來驗證處理邏輯。 */
+  var y0 = window.scrollY;
+  window.scrollTo(0, y0 + 60);
+  await wait(60);
+  window.dispatchEvent(new Event('scroll'));
+  await wait(60);
+  ck('E: 捲動時浮動選單自動收起（避免與選取位置脫節）', menu.hidden === true,
+    'scrollY ' + y0 + '→' + window.scrollY + ' hidden=' + menu.hidden);
+
+  /* ---------- F. 選取消失時選單關閉 ---------- */
+  COARSE = false;
+  selectIn(0, 2, 6);
+  fire('mouseup');
+  await wait(120);
+  ck('F: 重新選取後選單顯示', menu.hidden === false);
+  window.getSelection().removeAllRanges();
+  await wait(120);
+  ck('F: 選取被清空後選單關閉', menu.hidden === true);
+
+  /* ---------- G. 只有閱讀區的選取才會開啟選單 ---------- */
+  COARSE = false;
+  menu.hidden = true;
+  var r2b = document.createRange();
+  r2b.selectNodeContents(document.getElementById('spacer') || document.body);
+  var sel2 = window.getSelection();
+  sel2.removeAllRanges(); sel2.addRange(r2b);
+  document.body.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  await wait(120);
+  ck('G: 閱讀區外的選取不會開啟選單', menu.hidden === true);
+
+  var bad = out.filter(function (x) { return x.indexOf('FAIL') === 0; }).length;
+  document.title = 'SELMENU ' + (bad ? 'FAIL(' + bad + ')' : 'OK');
+  log('');
+  log('SUMMARY: ' + (out.length - bad - 1) + ' pass / ' + bad + ' fail');
+  var bad = out.filter(function (x) { return x.indexOf('FAIL') === 0; }).length;
+  document.title = 'SELMENU ' + (bad ? 'FAIL(' + bad + ')' : 'OK');
+  log('');
+  log('SUMMARY: ' + (out.length - bad) + ' pass / ' + bad + ' fail');
+  emit();
+ } catch (e) { emit('FATAL ' + (e && e.stack || e)); }
+ function emit(err) {
+   if (err) out.push(err);
+   if (document.getElementById('result')) return;
+   var pre = document.createElement('pre');
+   pre.id = 'result';
+   pre.textContent = out.join('\n');
+   document.body.appendChild(pre);
+ }
+})();
+</script>
+</body>
+</html>

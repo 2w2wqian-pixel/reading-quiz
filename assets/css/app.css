@@ -442,3 +442,112 @@ blockquote.q-quote::before{content:"引文";display:inline-block;font-size:11px;
   .hero h1{font-size:23px}
   .passage{padding:16px;font-size:16.5px}
 }
+
+/* ================================================================
+   Theme · Warm Off-White / Khaki / Flat
+   （覆寫於檔案末端；只改視覺，不動任何 class 名稱與功能）
+   ================================================================ */
+:root{
+  --cream:#FBF8F2; --cream-2:#F4EFE5; --paper:#FFFDF9;
+  --line:#ECE5D9; --line-soft:#F4EFE5;
+  --ink:#3A322A; --ink-soft:#6E6459; --ink-faint:#A0968A;
+
+  --pink:#C3B18C; --pink-deep:#A28F66;
+  --mint:#B7C2AC; --mint-deep:#84957A;
+  --yellow:#E3D3AE; --yellow-deep:#BFA76A;
+  --lav:#BFB7AA; --lav-deep:#9C9284;
+  --sky:#A9C1CE; --sky-deep:#6E8FA3;
+
+  --ok:#6E8F6A; --bad:#B4706A; --warn:#BFA76A;
+
+  --r:20px; --r-sm:12px;
+  --shadow:0 1px 2px rgba(58,50,42,.035), 0 10px 24px -12px rgba(58,50,42,.10);
+  --shadow-sm:0 1px 2px rgba(58,50,42,.03), 0 6px 14px -10px rgba(58,50,42,.08);
+
+  --font-cn:"SimSun","宋体","Songti TC","Noto Serif TC",serif;
+  --font-ui:"Times New Roman","SimSun","宋体",Times,serif;
+}
+body{background:var(--cream);color:var(--ink);font-family:var(--font-ui)}
+h1,h2,h3,h4{font-family:var(--font-ui);letter-spacing:.02em}
+
+/* ---------- 頂欄 ---------- */
+.topbar{background:rgba(251,248,242,.94);border-bottom:1px solid var(--line)}
+.topbar-inner{max-width:1180px;padding:12px 20px}
+.brand{gap:12px}
+.brand-badge{width:40px;height:40px;border-radius:12px;background:none;box-shadow:none;
+  transform:none;object-fit:contain;display:block;padding:0}
+.brand-text b{font-size:16.5px;letter-spacing:.03em}
+.brand-text small{color:var(--ink-faint);letter-spacing:.16em;font-size:10.5px;
+  font-family:"Times New Roman",Times,serif}
+.nav-link{padding:7px 15px;border-radius:12px;border:1px solid transparent;font-size:14.5px}
+.nav-link:hover{background:var(--cream-2)}
+.nav-link.active{background:var(--paper);border-color:var(--line);box-shadow:var(--shadow-sm)}
+.who .chip{background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:5px 13px}
+.view{max-width:1180px;padding:26px 20px 72px}
+
+/* ---------- 卡片 ---------- */
+.card{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);
+  padding:20px;box-shadow:var(--shadow);margin-bottom:16px}
+.card.tinted{background:#F7F3EB}
+.hero{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);
+  padding:0;overflow:hidden;box-shadow:var(--shadow)}
+.hero h1{font-size:26px;margin-bottom:0}
+.hero p{color:var(--ink-soft)}
+
+/* ---------- 按鈕（扁平 · 卡其） ---------- */
+.btn{border-radius:14px;border:1px solid var(--line);background:var(--paper);
+  padding:10px 20px;font-weight:400;letter-spacing:.03em;box-shadow:none}
+.btn:hover{background:var(--cream-2)}
+.btn:active{transform:none;background:#EFE9DD}
+.btn.primary,.btn.mint,.btn.sun,.btn.lav,.btn.sky{background:var(--pink);border-color:var(--pink);color:#2E2A24}
+.btn.primary:hover,.btn.mint:hover,.btn.sun:hover,.btn.lav:hover,.btn.sky:hover{filter:none;background:#CFBF9D}
+.btn.ghost{background:transparent;border:1px solid var(--line-2,#E2DACB);border-style:solid;color:var(--ink-soft)}
+.btn.ghost:hover{background:var(--cream-2)}
+.btn.danger{background:#F7EBE8;border-color:#E6CFC9;color:#9A5F57}
+.btn.sm{padding:6px 14px;font-size:13px;border-radius:11px}
+.btn.xs{padding:4px 10px;font-size:12px;border-radius:9px}
+.btn.block{width:100%}
+
+/* ---------- 標籤 ---------- */
+.tag{border-radius:8px;padding:3px 10px;font-size:12px;border-width:1px;box-shadow:none}
+.tag.pink{background:#F2ECDF;border-color:#E3D8C2;color:#8A784E}
+.tag.mint{background:#E8EDE2;border-color:#D3DCC9;color:#5B6A51}
+.tag.sun{background:#F4EBDA;border-color:#E6D8BC;color:#8A784E}
+.tag.sky{background:#E4EDF2;border-color:#CFDFE7;color:#4F6B7C}
+.tag.lav{background:#EFEBE4;border-color:#DED7CB;color:#7A7065}
+.tag.gray{background:#F1ECE3;border-color:#E3DBCE;color:#7C7266}
+
+/* ---------- 題目卡 ---------- */
+.q{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);
+  padding:18px 20px;box-shadow:var(--shadow-sm)}
+.q-no{background:#F0EADA;color:#8A784E;box-shadow:none;transform:none;border-radius:11px}
+.q-stem{font-size:16.5px;line-height:1.85}
+.opt{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--paper);padding:11px 14px}
+.opt:hover{border-color:var(--pink);background:#FBF7EE}
+.opt.checked{border-color:var(--pink-deep);background:#F2ECDF}
+
+/* ---------- 表單 ---------- */
+.input,select.input,textarea.input{border:1px solid var(--line);border-radius:var(--r-sm);
+  background:#F7F3EB;padding:10px 13px}
+.input:focus{border-color:var(--pink);background:#FFFDF9;box-shadow:0 0 0 3px rgba(195,177,140,.20)}
+.check input{accent-color:var(--pink-deep)}
+
+/* ---------- 表格 ---------- */
+.tbl{border-radius:var(--r-sm);overflow:hidden}
+.tbl th{background:#F4EFE5;border-color:var(--line)}
+.tbl td,.tbl th{border-color:var(--line)}
+
+/* ---------- 其他 ---------- */
+.empty .big{filter:saturate(.75)}
+.bar{border-radius:6px;background:#EFE9DD}
+.score-card{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:var(--shadow)}
+.drop{border:1.5px dashed var(--line-2,#E2DACB);border-radius:var(--r-sm);background:#F7F3EB}
+.drop:hover,.drop.over{background:#F2ECDF;border-color:var(--pink)}
+.step .n{background:var(--pink);color:#2E2A24}
+
+/* ---------- 首頁主視覺 ---------- */
+.hero-art{display:block;width:100%;height:clamp(170px,23vw,272px);object-fit:cover;
+  object-position:50% 80%;border-bottom:1px solid var(--line);background:#F4EFE5}
+.hero-body{padding:22px 24px 24px}
+@media(max-width:640px){.hero-body{padding:18px 16px 20px}}

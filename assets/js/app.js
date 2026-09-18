@@ -85,28 +85,15 @@
     view.innerHTML = '';
 
     view.appendChild(U.el('div.hero', {}, [
-      U.el('h1', { text: '上傳 Word 試卷，立刻變成線上閱讀測驗' }),
-      U.el('p', {
-        html: '老師上傳 .docx → 自動拆成文章、題目、選項與答案 → 學生登入作答 → ' +
-          '可在文章上<b>螢光標示、寫筆記、收集生詞</b> → 老師一次看到所有人的作答與學習痕跡。'
-      }),
-      U.el('div.row.mt2', {}, [
-        U.el('a.btn.primary', { href: '#/teacher/upload', text: '我是老師：上傳試卷' }),
-        U.el('a.btn.mint', { href: '#/student', text: '我是學生：開始作答' }),
-        U.el('a.btn.ghost', { href: '#/settings', text: '設定' })
+      U.el('img.hero-art', { src: 'assets/img/hero.svg', alt: '' }),
+      U.el('div.hero-body', {}, [
+        U.el('div.row', {}, [
+          U.el('a.btn.primary', { href: '#/student', text: '開始作答' }),
+          U.el('a.btn', { href: '#/teacher/upload', text: '上載試卷' }),
+          U.el('a.btn.ghost', { href: '#/settings', text: '設定' })
+        ])
       ])
     ]));
-
-    if (!who) {
-      view.appendChild(U.el('div.card.mt3', {}, [
-        U.el('h3', { text: '第一次使用？' }),
-        U.el('div.grid.g3', {}, [
-          step(1, '老師上傳試卷', '把 Word 檔拖進去，程式會自動拆解；有誤差可在編輯頁逐題微調。'),
-          step(2, '設定學生帳號', '在「④ 學生名冊」建立帳號，或讓學生自己用班級代碼。'),
-          step(3, '學生作答與標記', '學生登入後作答，可畫重點、加筆記、把不懂的詞收進生詞本。')
-        ])
-      ]));
-    }
 
     /* 可用試卷 */
     var box = U.el('div.mt3');
@@ -117,7 +104,7 @@
       if (!list.length) {
         box.appendChild(U.el('div.empty', {}, [
           U.el('div.big', { text: '📚' }),
-          U.el('small', { text: '尚無試卷，請老師先上傳。' })
+          U.el('small', { text: '目前沒有試卷' })
         ]));
         return;
       }
@@ -125,7 +112,10 @@
       list.forEach(function (m) {
         grid.appendChild(U.el('div.card.mb0', {}, [
           U.el('h3.mb0', { html: U.esc(m.title) }),
-          U.el('div.tiny.muted.mt1', { text: (m.level ? m.level + '・' : '') + (m.questionCount || 0) + ' 題・' + (m.totalMarks || 0) + ' 分' }),
+          U.el('div.tiny.muted.mt1', {
+            text: (m.level ? m.level + '・' : '') + (m.subject ? m.subject + '・' : '') +
+              (m.questionCount || 0) + ' 題・' + (m.totalMarks || 0) + ' 分'
+          }),
           U.el('div.row.mt2', {}, [
             U.el('a.btn.sm.primary', { href: '#/quiz/' + m.id, text: '開始作答' })
           ])
@@ -133,27 +123,6 @@
       });
       box.appendChild(grid);
     });
-
-    /* 部署與安全提示 */
-    view.appendChild(U.el('div.card.tinted.mt3', {}, [
-      U.el('h3', { text: '資料放在哪裡？' }),
-      U.el('div.tiny', {
-        html: [
-          '<b>試卷</b>：以 JSON 放在 repo 的 <code>data/quizzes/</code>，由 GitHub Pages 直接提供，學生讀取不需要任何 Token。',
-          '<b>老師寫入</b>：用 Personal Access Token 經 GitHub API 上傳；Token 只存在老師自己瀏覽器的 localStorage。',
-          '<b>學生作答</b>：免費收集端（建議 Google Apps Script→Google 試算表，無流量上限），或完全離線的 JSON 匯出匯入。',
-          '<b>更安全的做法</b>：① 用 fine-grained token 只授權單一 repo、並設到期日；② Token 不要貼給學生；' +
-          '③ 若學生會共用電腦，登入後記得登出；④ 這是課堂工具，不是銀行等級的身分驗證，請勿放敏感個資。'
-        ].map(function (x) { return '<div style="padding:3px 0">' + x + '</div>'; }).join('')
-      })
-    ]));
-  }
-
-  function step(n, title, desc) {
-    return U.el('div.step', {}, [
-      U.el('div.n', { text: String(n) }),
-      U.el('div', {}, [U.el('b', { text: title }), U.el('div.tiny.muted', { text: desc })])
-    ]);
   }
 
   /* ============================================================

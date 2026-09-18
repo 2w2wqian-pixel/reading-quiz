@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 186" role="img" aria-label="湖泊、群山與書籍">
+  <circle cx="272" cy="40" r="19" fill="#EFE3C8"/>
+  <path d="M0 118 58 58 100 98 148 44 214 118Z" fill="#CFC2A8"/>
+  <path d="M148 44 168 66 128 66Z" fill="#F2ECE0"/>
+  <path d="M96 118 168 46 246 118Z" fill="#B0A48A"/>
+  <path d="M168 46 190 70 146 70Z" fill="#F2ECE0"/>
+  <path d="M-8 118 34 82 82 118Z" fill="#A79B82"/>
+  <path d="M6 96 22 78 38 96Z" fill="#A9B49F"/>
+  <path d="M286 100 302 82 318 100Z" fill="#A9B49F"/>
+  <path d="M0 118h340v68H0z" fill="#93AFC0"/>
+  <ellipse cx="74" cy="136" rx="38" ry="3.4" fill="#AAC2CF"/>
+  <ellipse cx="256" cy="146" rx="48" ry="3.8" fill="#AAC2CF"/>
+  <ellipse cx="158" cy="162" rx="32" ry="3" fill="#AAC2CF"/>
+  <ellipse cx="292" cy="128" rx="26" ry="2.6" fill="#AAC2CF"/>
+  <path d="M0 118h340v10c-113-18-227-18-340 0z" fill="#A3BAC7" opacity=".55"/>
+  <rect x="20" y="152" width="150" height="18" rx="6" fill="#C9A49C"/>
+  <rect x="33" y="132" width="126" height="18" rx="6" fill="#C3B18C"/>
+  <rect x="46" y="112" width="98" height="18" rx="6" fill="#A9B49F"/>
+  <rect x="53" y="117" width="84" height="2.8" rx="1.4" fill="#FFFDF9" opacity=".55"/>
+  <rect x="40" y="137" width="112" height="2.8" rx="1.4" fill="#FFFDF9" opacity=".5"/>
+  <rect x="28" y="157" width="134" height="2.8" rx="1.4" fill="#FFFDF9" opacity=".45"/>
+  <path d="M176 152 197 133 218 152Z" fill="#B9AB8E"/>
+  <path d="M210 152 230 135 250 152Z" fill="#9A9078"/>
+  <path d="M262 150 278 138 294 150Z" fill="#B9AB8E"/>
+</svg>

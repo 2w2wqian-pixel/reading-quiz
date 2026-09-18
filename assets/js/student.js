@@ -769,9 +769,6 @@
 
       if (mode === 'login') {
         card.appendChild(U.el('h2', { text: '學生登入' }));
-        card.appendChild(U.el('p.tiny.muted', {
-          text: '用手機、iPad 或電腦都可以登入；作答進度會自動存到雲端，換裝置也能繼續。'
-        }));
         var un = U.el('input.input', { placeholder: '使用者帳號' });
         var pw = U.el('input.input', { type: 'password', placeholder: '密碼' });
         card.appendChild(field('帳號', un));

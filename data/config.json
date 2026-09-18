@@ -7,5 +7,14 @@
     "index.json 由老師端的『發佈到 GitHub』自動維護，不需手動編輯。",
     "roster.json 為學生帳號（僅存放 salt:hash，不存明文密碼）。",
     "學生讀取這些檔案是同源靜態讀取，不需要任何 Token。"
-  ]
+  ],
+  "firebase": {
+    "dbUrl": "https://chinese-6e50a-default-rtdb.asia-southeast1.firebasedatabase.app/",
+    "apiKey": "AIzaSyCkOon9YiFLddQTZjlqKQwwQZX3w__mpVg",
+    "classCode": ""
+  },
+  "hook": {
+    "postUrl": "https://script.google.com/macros/s/AKfycbzAZmyvepOIXmxdSJnbW6V_S7uLzK76jaIJ3EQQLCQ8b68Z1CeQ0yFEIHos1ypHE3I/exec"
+  },
+  "updatedAt": "2026-09-18T14:01:37.652Z"
 }

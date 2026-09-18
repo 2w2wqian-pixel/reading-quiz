@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>雲端自我診斷</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="../assets/css/app.css">
+</head>
+<body>
+
+<!-- 只載入診斷需要的核心模組（不載 app.js，避免路由干擾） -->
+<script src="../assets/js/core/util.js"></script>
+<script src="../assets/js/core/crypto.js"></script>
+<script src="../assets/js/core/store.js"></script>
+<script src="../assets/js/core/backend.js"></script>
+
+<script>
+/* 真實瀏覽器環境的雲端自我診斷。
+   放在 tools/ 底下時，Published.base 需改成 '../data/'（它預設是相對路徑 'data/'）。 */
+(function () {
+  var B = window.RQ.backend, U = window.RQ.util;
+  B.Published.base = '../data/';
+  B._cfgPromise = null;
+
+  function el(tag, attrs, kids) {
+    var e = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) {
+      if (k === 'text') e.textContent = attrs[k];
+      else if (k === 'html') e.innerHTML = attrs[k];
+      else e.setAttribute(k, attrs[k]);
+    });
+    (kids || []).forEach(function (c) { e.appendChild(c); });
+    return e;
+  }
+
+  var host = el('div', { 'class': 'view' });
+  document.body.appendChild(host);
+  host.appendChild(el('div', { 'class': 'card' }, [
+    el('h3', { text: '雲端自我診斷' }),
+    el('div', { 'class': 'tiny muted', text: '正在檢查各條通道…' })
+  ]));
+
+  B.diagnose().then(function (rep) {
+    host.innerHTML = '';
+
+    var head = el('div', { 'class': 'card' });
+    head.appendChild(el('h1', { text: '雲端自我診斷' }));
+    head.appendChild(el('div', { 'class': 'row mt1' }, [
+      el('span', { 'class': 'tag ' + (rep.badCount ? 'bad' : 'mint'), text: rep.badCount ? rep.badCount + ' 項需處理' : '全部通過' }),
+      el('span', { 'class': 'tag gray', text: '通過 ' + rep.okCount + ' / ' + rep.items.length })
+    ]));
+    head.appendChild(el('div', { 'class': 'tiny muted mt1', html:
+      '時間 ' + U.esc(String(rep.at).replace('T', ' ').slice(0, 19)) +
+      '　·　裝置身分 ' + U.esc(rep.device) +
+      '　·　雲端通道 ' + U.esc(rep.driver) }));
+    host.appendChild(head);
+
+    var card = el('div', { 'class': 'card' });
+    card.appendChild(el('h3', { text: '檢查結果' }));
+    var rows = rep.items.map(function (it) {
+      return '<tr><td>' + U.esc(it.name) + '</td>' +
+        '<td><span class="tag ' + (it.ok ? 'mint' : 'bad') + '">' + (it.ok ? 'OK' : '需處理') + '</span></td>' +
+        '<td class="tiny">' + U.esc(it.detail || '') + '</td></tr>';
+    }).join('');
+    var t = el('table', { 'class': 'tbl' });
+    t.innerHTML = '<thead><tr><th>檢查項目</th><th>結果</th><th>說明</th></tr></thead><tbody>' + rows + '</tbody>';
+    card.appendChild(el('div', { 'class': 'tbl-wrap' }, [t]));
+    host.appendChild(card);
+
+    var ns = el('div', { 'class': 'card tinted' });
+    ns.appendChild(el('h3', { text: '命名空間（跨裝置必須相同）' }));
+    ns.appendChild(el('div', { text: rep.base }));
+    ns.appendChild(el('div', { 'class': 'tiny muted mt1', html:
+      '本機試卷 ' + (rep.counts.quizzes || 0) + ' 份　·　名冊 ' + (rep.counts.roster || 0) +
+      ' 人　·　作答 ' + (rep.counts.submissions || 0) + ' 筆' }));
+    if (rep.badCount) {
+      var bad = rep.items.filter(function (x) { return !x.ok; });
+      ns.appendChild(el('div', { 'class': 'warnbox mt2', html:
+        '<b>需要處理：</b>' + bad.map(function (x) { return U.esc(x.name); }).join('、') }));
+    }
+    host.appendChild(ns);
+
+    var post = document.createElement('pre');
+    post.id = 'result';
+    post.style.cssText = 'display:none';
+    post.textContent = B.diagText(rep);
+    document.body.appendChild(post);
+    document.title = rep.badCount ? 'DIAG FAIL(' + rep.badCount + ')' : 'DIAG OK';
+  }).catch(function (e) {
+    host.appendChild(el('div', { 'class': 'card' }, [
+      el('div', { 'class': 'warnbox', text: '診斷失敗：' + ((e && e.message) || e) })
+    ]));
+    document.title = 'DIAG FATAL';
+  });
+})();
+</script>
+</body>
+</html>

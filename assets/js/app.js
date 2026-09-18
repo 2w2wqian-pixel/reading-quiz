@@ -221,6 +221,16 @@
       window.addEventListener('hashchange', route);
       if (!location.hash) location.hash = '#/';
       route();
+
+      /* 之前雲端不通時，提交會標記 _pending（只存在本機）。
+         開站後與恢復連線時各自動補送一次，否則那筆作答永遠不會到老師那邊。 */
+      function retryPending() {
+        Backend.retryPending().then(function (n) {
+          if (n) U.toast('已補送 ' + n + ' 筆先前未同步的作答', 'ok', 3600);
+        }).catch(function () { /* 沒雲端或仍不通：下次再試 */ });
+      }
+      setTimeout(retryPending, 1500);
+      window.addEventListener('online', retryPending);
     });
 
     /* 供偵錯 */

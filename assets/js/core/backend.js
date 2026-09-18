@@ -60,15 +60,31 @@
   /* ============================================================
      驅動 A：Firebase Realtime Database
      ============================================================ */
+  /* Firebase 匿名登入的錯誤碼 → 可操作的說明（照著做就能修好） */
+  var FB_HINT = {
+    CONFIGURATION_NOT_FOUND: 'Firebase 專案還沒啟用「匿名」登入：'
+      + 'Firebase Console → Authentication → Sign-in method → 啟用「匿名」',
+    OPERATION_NOT_ALLOWED: '「匿名」登入被停用了：'
+      + 'Firebase Console → Authentication → Sign-in method → 重新啟用「匿名」',
+    API_KEY_INVALID: 'Web API Key 無效或已被刪除，請重新複製貼上',
+    PERMISSION_DENIED: 'Web API Key 被限制（請到 Google Cloud → 憑證 → 允許這個網址）',
+    INVALID_API_KEY: 'Web API Key 格式錯誤'
+  };
+
   var Firebase = {
     cfg: function () { return Settings.get().fb || {}; },
+    /**
+     * 班級代碼＝資料命名空間。**未填時回退為 'default'**。
+     * 舊版把它當成必要欄位（ok() 要求 classCode 非空），但它其實只是命名空間；
+     * 未填時 ok() 直接回 false，整個雲端會「靜默失效」——不會報錯，
+     * 只是什麼都沒寫上去。這是先前「完全沒有雲端同步」的程式面主因。
+     */
+    code: function () { return safeKey(Firebase.cfg().classCode || '') || 'default'; },
     ok: function () {
       var c = Firebase.cfg();
-      return !!(c.enabled && c.dbUrl && c.apiKey && c.classCode);
+      return !!(c.enabled && c.dbUrl && c.apiKey);
     },
-    base: function () {
-      return 'rq/' + encodeURIComponent(safeKey((Firebase.cfg().classCode || 'default')));
-    },
+    base: function () { return 'rq/' + encodeURIComponent(Firebase.code()); },
     path: function (p) { return Firebase.base() + (p ? '/' + p : ''); },
 
     /** 匿名登入，取 idToken（學生不需要有 Google 帳號） */
@@ -80,7 +96,10 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ returnSecureToken: true })
       }).then(function (r) { return r.json(); }).then(function (j) {
-        if (j.error) throw new Error((j.error && j.error.message) || '匿名登入失敗');
+        if (j.error) {
+          var code = (j.error && j.error.message) || 'UNKNOWN';
+          throw new Error(code + (FB_HINT[code] ? '｜' + FB_HINT[code] : '｜匿名登入失敗'));
+        }
         Settings.set({ fb: { _token: j.idToken, _exp: Date.now() + (parseInt(j.expiresIn, 10) || 3600) * 1000 } });
         return j.idToken;
       });
@@ -96,6 +115,18 @@
       }).then(function (r) { return r.ok ? r.json() : null; })
         .catch(function () { return null; });
     },
+    /** 嚴格版讀取：失敗時 reject（一般讀取用 get，會吞錯；診斷與退路判斷需要知道失敗） */
+    getStrict: function (p) {
+      if (!Firebase.ok()) return Promise.reject(new Error('尚未設定 Firebase'));
+      return Firebase.signIn().then(function (t) {
+        return fetch(Firebase._url(Firebase.path(p), t), { cache: 'no-store' });
+      }).then(function (r) {
+        if (r.status === 401) throw new Error('Realtime Database 規則拒絕讀取（401）：請把規則設為 auth != null');
+        if (!r.ok) throw new Error('Firebase 讀取失敗 ' + r.status);
+        return r.json();
+      });
+    },
+
     put: function (p, val) {
       if (!Firebase.ok()) return Promise.reject(new Error('尚未設定 Firebase'));
       return Firebase.signIn().then(function (t) {
@@ -194,6 +225,10 @@
     /* 上次讀取走哪條路，給老師端顯示用 */
     lastSource: '',
     lastReadAt: null,
+    /* 最後一次雲端錯誤（雲端壞掉時會靜默回空陣列，這個欄位是唯一的線索） */
+    lastError: '',
+    /* 最後一次「實際寫入成功」的通道（可能是 Firebase 失敗後退回 Apps Script） */
+    lastWritten: '',
 
     driver: function () {
       if (Firebase.ok()) return 'firebase';
@@ -204,10 +239,39 @@
     put: function (rec) {
       if (Firebase.ok()) {
         rec.id = safeKey(rec.id);
-        return Firebase.put(rec.type + '/' + rec.id, rec);
+        return Firebase.put(rec.type + '/' + rec.id, rec).then(function () {
+          Cloud.lastWritten = 'firebase';
+          return true;
+        }).catch(function (e) {
+          Cloud.lastError = (e && e.message) || String(e);
+          /* Firebase 有設定但寫不進去 → 自動退回 Apps Script，
+             避免「以為有雲端、其實什麼都沒存」。 */
+          if (Hook.ok()) {
+            return Hook.post(rec).then(function () { Cloud.lastWritten = 'hook'; return true; });
+          }
+          throw e;
+        });
       }
-      if (Hook.ok()) return Hook.post(rec);
+      if (Hook.ok()) return Hook.post(rec).then(function () { Cloud.lastWritten = 'hook'; return true; });
       return Promise.reject(new Error('尚未設定雲端（Firebase 或收集端網址）'));
+    },
+
+    /** Apps Script 讀取（先試即時 /exec，讀不到再用發佈的 CSV 快取） */
+    _fromHook: function (type) {
+      return Hook.live(type).then(function (live) {
+        if (live !== null) {
+          Cloud.lastSource = 'live';
+          Cloud.lastReadAt = U.nowISO();
+          return live;
+        }
+        return Hook.csv().then(function (rows) {
+          Cloud.lastSource = 'csv';            /* 走快取，可能延遲 0–5 分鐘 */
+          Cloud.lastReadAt = U.nowISO();
+          return rows;
+        });
+      }).then(function (all) {
+        return (all || []).filter(function (r) { return !type || r.type === type; });
+      });
     },
 
     /**
@@ -217,29 +281,18 @@
      */
     getAll: function (type) {
       if (Firebase.ok()) {
-        return Firebase.get(type).then(function (o) {
+        return Firebase.getStrict(type).then(function (o) {
           Cloud.lastSource = 'firebase';
           Cloud.lastReadAt = U.nowISO();
           if (!o) return [];
           return Object.keys(o).map(function (k) { return o[k]; }).filter(Boolean);
+        }).catch(function (e) {
+          Cloud.lastError = (e && e.message) || String(e);
+          if (Hook.ok()) return Cloud._fromHook(type);
+          return [];
         });
       }
-      if (Hook.ok()) {
-        return Hook.live(type).then(function (live) {
-          if (live !== null) {                   // 即時讀取成功（即使是空陣列）
-            Cloud.lastSource = 'live';
-            Cloud.lastReadAt = U.nowISO();
-            return live;
-          }
-          return Hook.csv().then(function (rows) {
-            Cloud.lastSource = 'csv';            // 走快取，可能延遲
-            Cloud.lastReadAt = U.nowISO();
-            return rows;
-          });
-        }).then(function (all) {
-          return (all || []).filter(function (r) { return !type || r.type === type; });
-        });
-      }
+      if (Hook.ok()) return Cloud._fromHook(type);
       Cloud.lastSource = 'offline';
       return Promise.resolve([]);
     },
@@ -693,19 +746,30 @@
     /** 把合併後的名冊同步到「雲端 + repo」，讓任何裝置都拿得到同樣的帳號 */
     syncRoster: function () {
       return Backend.getRoster().then(function (list) {
+        var r = { count: list.length, channels: 0, errors: [] };
         var jobs = [];
         if (Firebase.ok() || Hook.ok()) {
           jobs.push(list.reduce(function (acc, s) {
             return acc.then(function () {
               return Cloud.put(makeRec('register', s.username, null, s, { classCode: s.classCode || '' }));
             });
-          }, Promise.resolve(true)));
+          }, Promise.resolve(true))
+            .then(function () { r.channels++; })
+            .catch(function (e) { r.errors.push('雲端：' + ((e && e.message) || e)); }));
         }
         if (GitHub.ok()) {
-          jobs.push(GitHub.write((Settings.get().gh.path || 'data') + '/roster.json', list, 'sync roster'));
+          jobs.push(GitHub.write((Settings.get().gh.path || 'data') + '/roster.json', list, 'sync roster')
+            .then(function () { r.channels++; })
+            .catch(function (e) { r.errors.push('repo：' + ((e && e.message) || e)); }));
         }
         return Promise.all(jobs).then(function () {
-          return { count: list.length, channels: jobs.length };
+          /* 一個通道都沒成功 → 明確報錯。否則老師會以為同步完成，
+             實際上學生什麼都讀不到（先前「找不到此帳號」的成因之一）。 */
+          if (!r.channels) throw new Error(r.errors.length ? r.errors.join('；') : '尚未設定任何雲端或 GitHub');
+          /* repo 是學生跨裝置唯一讀得到的通道 → 它失敗要單獨提醒 */
+          var repoFailed = r.errors.some(function (x) { return x.indexOf('repo：') === 0; });
+          r.repoFailed = repoFailed;
+          return r;
         });
       });
     },
@@ -723,15 +787,30 @@
       if (Backend._cfgPromise) return Backend._cfgPromise;
       Backend._cfgPromise = Published._fetch('config.json').then(function (c) {
         if (!c) return null;
-        var s = Settings.get(), patch = {};
+        var s = Settings.get(), patch = {}, pfb = {};
         var fb = c.firebase || {};
         var cur = s.fb || {};
-        if (fb.dbUrl && fb.apiKey && fb.classCode &&
-            !(cur.dbUrl && cur.apiKey && cur.classCode)) {
-          patch.fb = { enabled: true, dbUrl: fb.dbUrl, apiKey: fb.apiKey, classCode: fb.classCode };
-        }
+
+        /* 缺什麼補什麼：不覆蓋這台裝置已經填好的值（老師自己的設定優先）。
+           舊版要求「三個欄位都齊、且本機全空」才套用 → classCode 一空就整組失效。 */
+        if (fb.dbUrl && !cur.dbUrl) pfb.dbUrl = fb.dbUrl;
+        if (fb.apiKey && !cur.apiKey) pfb.apiKey = fb.apiKey;
+        if (!cur.classCode) pfb.classCode = fb.classCode || 'default';
+        if (pfb.dbUrl || pfb.apiKey) { pfb.enabled = true; patch.fb = pfb; }
+
         var hk = c.hook || {};
         if (hk.postUrl && !(s.hook || {}).postUrl) patch.hook = { postUrl: hk.postUrl };
+
+        /* 公開政策：學生端要跟老師端一致（這些值只存在各自的 localStorage，
+           不同步的話會出現「老師開放全部、學生只看到指派」這類不一致）。
+           老師自己的電腦有 GitHub Token → 尊重本機設定，不被 repo 覆蓋。 */
+        var isTeacherDevice = !!(s.gh && s.gh.token);
+        if (!isTeacherDevice && c.policy) {
+          ['assignOnly', 'showAnswerAfterSubmit', 'allowRetake', 'enableHighlight',
+            'allowSelfRegister'].forEach(function (k) {
+              if (c.policy[k] != null) patch[k] = c.policy[k];
+            });
+        }
         if (Object.keys(patch).length) Settings.set(patch);
         return c;
       }).catch(function () { return null; });
@@ -750,8 +829,20 @@
         cfg.version = 1;
         cfg.quizDir = 'data/quizzes';
         cfg.rosterPath = 'data/roster.json';
-        cfg.firebase = { dbUrl: fb.dbUrl || '', apiKey: fb.apiKey || '', classCode: fb.classCode || '' };
+        cfg.firebase = {
+          dbUrl: fb.dbUrl || '', apiKey: fb.apiKey || '',
+          /* 一定要寫出「實際使用的命名空間」，否則學生裝置會落到不同節點，
+             兩邊各寫各的 → 看起來像「有同步但看不到對方」。 */
+          classCode: fb.classCode || 'default'
+        };
         cfg.hook = { postUrl: hk.postUrl || '' };
+        cfg.policy = {
+          assignOnly: s.assignOnly !== false,
+          showAnswerAfterSubmit: s.showAnswerAfterSubmit !== false,
+          allowRetake: !!s.allowRetake,
+          enableHighlight: s.enableHighlight !== false,
+          allowSelfRegister: !!s.allowSelfRegister
+        };
         cfg.updatedAt = U.nowISO();
         return GitHub.write(path, cfg, 'publish public config');
       }).then(function () { return true; });
@@ -835,7 +926,7 @@
       return Store.submission.save(sub).then(function (s) {
         if (Firebase.ok() || Hook.ok()) {
           return Cloud.put(makeRec('submission', s.quizId, s.studentId, s))
-            .then(function () { s._synced = Cloud.driver(); delete s._pending; })
+            .then(function () { s._synced = Cloud.lastWritten || Cloud.driver(); delete s._pending; delete s._syncError; })
             .catch(function (e) { s._syncError = e.message; s._pending = true; })
             .then(function () { return Store.submission.save(s); });
         }
@@ -1017,6 +1108,171 @@
           });
         }, Promise.resolve(0));
       });
+    },
+
+    /**
+     * 雲端自我診斷：把「這台裝置」的每一條同步通道逐一實測，回傳可讀報告。
+     * 為什麼需要它：同步跨越多個通道，任一節壞掉都不會報錯、只會「看起來沒資料」；
+     * 而且設定存在各裝置的 localStorage，必須在**每一台裝置**各跑一次，
+     * 並比對「命名空間 base」是否相同——不同就會各寫各的、永遠看不到對方。
+     */
+    diagnose: function () {
+      var rep = { at: U.nowISO(), items: [], counts: {}, base: '', driver: '', device: '' };
+      function add(name, ok, detail) {
+        rep.items.push({ name: name, ok: !!ok, detail: detail == null ? '' : String(detail) });
+      }
+      var fb = Firebase.cfg();
+      var gh = Settings.get().gh || {};
+
+      rep.driver = Cloud.driver();
+      rep.base = Firebase.base();
+      rep.device = (function () {
+        var w = Settings.who();
+        return (w && (w.name || w.username)) ? (w.name || w.username) : '未登入';
+      })();
+
+      return Store.ready()
+        .then(function () { return Store.kv.set('diag', { at: rep.at }); })
+        .then(function () { return Store.kv.get('diag', null); })
+        .then(function (v) { add('本機儲存（IndexedDB）', !!(v && v.at), '可讀可寫'); })
+        .catch(function (e) { add('本機儲存（IndexedDB）', false, (e && e.message) || e); })
+
+        .then(function () { return Backend.loadConfig(); })
+        .then(function (c) {
+          add('公開設定 data/config.json',
+            !!(c && (((c.firebase || {}).dbUrl) || ((c.hook || {}).postUrl))),
+            c ? ('Firebase ' + ((c.firebase || {}).dbUrl ? '有' : '無') +
+                 '／Apps Script ' + ((c.hook || {}).postUrl ? '有' : '無') +
+                 (c.updatedAt ? '　更新於 ' + String(c.updatedAt).slice(0, 16).replace('T', ' ') : ''))
+              : '讀不到（尚未發佈，或網站路徑不是站台根目錄）');
+          return null;
+        })
+
+        .then(function () {
+          var missing = [];
+          if (!fb.dbUrl) missing.push('Database URL');
+          if (!fb.apiKey) missing.push('Web API Key');
+          add('Firebase 設定', Firebase.ok(),
+            Firebase.ok()
+              ? ('命名空間 ' + Firebase.base() + (fb.classCode ? '' : '（班級代碼未填，自動使用 default）'))
+              : ('未設定齊備：缺 ' + missing.join('、')));
+        })
+
+        .then(function () {
+          if (!Firebase.ok()) { add('Firebase 匿名登入', false, '略過（設定不齊備）'); return null; }
+          return Firebase.signIn()
+            .then(function () { add('Firebase 匿名登入', true, '已取得 idToken'); })
+            .catch(function (e) { add('Firebase 匿名登入', false, (e && e.message) || e); })
+            .then(function () {
+              return Firebase.put('meta/diag', { at: rep.at, device: rep.device })
+                .then(function () { add('Firebase 寫入', true, '已寫入 meta/diag'); })
+                .catch(function (e) { add('Firebase 寫入', false, (e && e.message) || e); });
+            })
+            .then(function () {
+              return Firebase.getStrict('meta/diag')
+                .then(function (v) {
+                  add('Firebase 讀取', !!(v && v.at),
+                    (v && v.at) ? ('讀回 ' + v.at) : '讀不到（請檢查 Realtime Database 規則）');
+                })
+                .catch(function (e) { add('Firebase 讀取', false, (e && e.message) || e); });
+            });
+        })
+
+        .then(function () {
+          /* 報告要看「實際有效」的通道：Firebase 設定了但不通，
+             就必須講明已退回 Apps Script，而不是照 driver() 回報 firebase。 */
+          var fbFailed = rep.items.some(function (x) {
+            return /^Firebase (匿名登入|寫入|讀取)$/.test(x.name) && !x.ok;
+          });
+          var eff = Cloud.driver();
+          if (eff === 'firebase' && fbFailed) {
+            eff = Hook.ok() ? 'appscript（Firebase 不通，已自動退回）'
+                            : 'offline（Firebase 不通且無備援）';
+          }
+          add('實際使用的雲端通道', eff.indexOf('offline') !== 0,
+            eff + (Cloud.lastError ? '　上次錯誤：' + Cloud.lastError : ''));
+          if (!Hook.ok()) return null;
+          return Hook.live(null).then(function (live) {
+            add('Apps Script 通道', live !== null,
+              live === null ? '即時讀取被擋（CORS）；會退回 CSV 快取，可能延遲 0–5 分鐘'
+                            : ('即時讀取 OK，' + (live ? live.length : 0) + ' 筆'));
+          }).catch(function (e) { add('Apps Script 通道', false, (e && e.message) || e); });
+        })
+
+        .then(function () {
+          add('GitHub 設定（老師發佈用）', GitHub.ok(),
+            GitHub.ok() ? (gh.owner + '/' + gh.repo + ' @' + (gh.branch || 'main') + '　路徑 ' + (gh.path || 'data'))
+                        : '未設定或未填 Token → 無法發佈試卷／同步名冊到 repo');
+          if (!GitHub.ok()) return null;
+          return GitHub.readJSON((gh.path || 'data') + '/roster.json', null)
+            .then(function (r) {
+              add('GitHub 讀取（repo 名冊）', Array.isArray(r),
+                Array.isArray(r) ? (r.length + ' 筆') : '讀不到');
+            })
+            .catch(function (e) { add('GitHub 讀取（repo 名冊）', false, (e && e.message) || e); });
+        })
+
+        .then(function () {
+          return Published._fetch('roster.json').then(function (r) {
+            add('網站檔案讀取（學生端唯一通道）', Array.isArray(r),
+              Array.isArray(r) ? (r.length + ' 筆名冊') : '讀不到（尚未發佈名冊）');
+          }).catch(function (e) {
+            add('網站檔案讀取（學生端唯一通道）', false, (e && e.message) || e);
+          });
+        })
+
+        .then(function () {
+          return Promise.all([
+            Backend.getRoster().catch(function () { return []; }),
+            Store.roster.all().catch(function () { return []; }),
+            Cloud.getAll('register').catch(function () { return []; }),
+            Published.roster().catch(function () { return []; })
+          ]).then(function (r) {
+            rep.counts.roster = r[0].length;
+            add('名冊（三通道合併）', r[0].length > 0,
+              '合併後 ' + r[0].length + ' 人　＝　本機 ' + r[1].length +
+              '＋雲端 ' + r[2].length + '＋repo ' + r[3].length);
+            return null;
+          });
+        })
+
+        .then(function () {
+          return Promise.all([
+            Backend.listQuizzes().catch(function () { return []; }),
+            Backend.listSubmissions().catch(function () { return []; })
+          ]).then(function (r) {
+            var q = r[0], subs = r[1];
+            var pend = subs.filter(function (x) { return x._pending; }).length;
+            rep.counts.quizzes = q.length;
+            rep.counts.submissions = subs.length;
+            add('試卷清單（本機＋repo＋雲端）', q.length > 0, q.length + ' 份');
+            add('作答紀錄（本機＋雲端）', pend === 0,
+              subs.length + ' 筆' + (pend ? '，其中 ' + pend + ' 筆尚未同步成功' : ''));
+            return null;
+          });
+        })
+
+        .then(function () {
+          rep.okCount = rep.items.filter(function (x) { return x.ok; }).length;
+          rep.badCount = rep.items.length - rep.okCount;
+          return rep;
+        });
+    },
+
+    /** 把診斷報告轉成可複製的純文字 */
+    diagText: function (rep) {
+      var L = [];
+      L.push('閱讀理解練習站 · 雲端自我診斷');
+      L.push('時間 ' + String(rep.at || '').replace('T', ' ').slice(0, 19));
+      L.push('裝置身分 ' + rep.device + '　雲端通道 ' + rep.driver);
+      L.push('命名空間 ' + rep.base + '　（跨裝置必須相同）');
+      L.push('----');
+      (rep.items || []).forEach(function (it) {
+        L.push((it.ok ? '[OK]  ' : '[!!]  ') + it.name + (it.detail ? '　→ ' + it.detail : ''));
+      });
+      L.push('----');
+      L.push('通過 ' + rep.okCount + ' / 失敗 ' + rep.badCount);
+      return L.join('\n');
     },
 
     archiveSubmissions: function (quizId) {

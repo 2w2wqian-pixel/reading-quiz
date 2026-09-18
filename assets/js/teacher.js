@@ -1560,8 +1560,12 @@
       U.el('button.btn.sm.sun', {
         text: '同步名冊到所有裝置', onclick: function () {
           Backend.syncRoster().then(function (r) {
-            U.toast('名冊已同步（' + r.count + ' 人 · ' + r.channels + ' 個通道）', 'ok', 4000);
-          }).catch(function (e) { U.toast('失敗：' + e.message, 'bad'); });
+            if (r.errors.length) {
+              U.toast('名冊同步不完全（' + r.count + ' 人）：' + r.errors.join('；'), 'bad', 6500);
+            } else {
+              U.toast('名冊已同步（' + r.count + ' 人 · ' + r.channels + ' 個通道）', 'ok', 4000);
+            }
+          }).catch(function (e) { U.toast('同步失敗：' + ((e && e.message) || e), 'bad', 6500); });
         }
       })
     ]));
@@ -1804,6 +1808,61 @@
       })
     ]));
     view.appendChild(hk);
+
+    /* ---------- ⑥ 雲端自我診斷 ---------- */
+    var diagBox = U.el('div.mt2');
+    var lastRep = null;
+
+    function reportTable(rep) {
+      var rows = rep.items.map(function (it) {
+        return '<tr><td>' + U.esc(it.name) + '</td>' +
+          '<td><span class="tag ' + (it.ok ? 'mint' : 'bad') + '">' + (it.ok ? 'OK' : '需處理') + '</span></td>' +
+          '<td class="tiny">' + U.esc(it.detail || '') + '</td></tr>';
+      }).join('');
+      var t = U.el('table.tbl');
+      t.innerHTML = '<thead><tr><th>檢查項目</th><th>結果</th><th>說明</th></tr></thead><tbody>' + rows + '</tbody>';
+      return t;
+    }
+
+    var diagCard = U.el('div.card');
+    diagCard.appendChild(U.el('h3', { text: '⑥ 雲端自我診斷' }));
+    diagCard.appendChild(U.el('div.tiny.muted', {
+      html: '同步跨越多條通道（本機／雲端／repo），任一條壞掉都<b>不會報錯</b>，' +
+        '只會表現成「看起來沒資料」。<br>' +
+        '請在<b>每一台裝置</b>（老師電腦、iPad、學生機）各按一次，並確認「命名空間」完全相同——' +
+        '不同就會各寫各的、永遠看不到對方。'
+    }));
+    diagCard.appendChild(U.el('div.row.mt2', {}, [
+      U.el('button.btn.primary.sm', {
+        text: '開始檢查', onclick: function () {
+          diagBox.innerHTML = '';
+          diagBox.appendChild(U.el('div.tiny.muted', { text: '檢查中…（會實際寫入並讀回雲端）' }));
+          Backend.diagnose().then(function (rep) {
+            lastRep = rep;
+            diagBox.innerHTML = '';
+            diagBox.appendChild(U.el('div.tbl-wrap', {}, [reportTable(rep)]));
+            var bad = rep.items.filter(function (x) { return !x.ok; });
+            diagBox.appendChild(U.el('div.mt1.tiny', {
+              html: bad.length
+                ? '<b>需要處理：</b>' + bad.map(function (x) { return U.esc(x.name); }).join('、')
+                : '<b>全部通過。</b>'
+            }));
+          }).catch(function (e) { U.toast('診斷失敗：' + ((e && e.message) || e), 'bad'); });
+        }
+      }),
+      U.el('button.btn.sm', {
+        text: '複製報告', onclick: function () {
+          if (!lastRep) { U.toast('請先按「開始檢查」', 'bad'); return; }
+          var txt = Backend.diagText(lastRep);
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(txt).then(function () { U.toast('報告已複製', 'ok'); })
+              .catch(function () { U.download('雲端診斷.txt', txt); });
+          } else U.download('雲端診斷.txt', txt);
+        }
+      })
+    ]));
+    diagCard.appendChild(diagBox);
+    view.appendChild(diagCard);
 
     var sync = U.el('div.card');
     sync.appendChild(U.el('h3', { text: '⑤ 同步與備份' }));

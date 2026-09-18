@@ -658,3 +658,7 @@ h1,h2,h3,h4{font-family:var(--font-ui);letter-spacing:.02em}
 .sel-menu.dock .sel-menu-btns{gap:8px}
 .sel-menu.dock .mini-btn{padding:9px 13px;font-size:13.5px}
 .sel-menu.dock .sel-menu-text{max-height:34px}
+
+/* ---------- 診斷報告：失敗標籤 ---------- */
+.tag.bad{background:#F7EBE8;border-color:#E6CFC9;color:#9A5F57}
+.tbl td .tiny{color:var(--ink-soft)}

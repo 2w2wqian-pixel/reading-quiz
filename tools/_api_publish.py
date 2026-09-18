@@ -14,11 +14,20 @@
 #
 # 用法：python tools/_api_publish.py <TOKEN> [--force-base]
 #   --force-base：允許遠端已前進時仍發佈（仍會通過 data/ 安全鎖）
+#   --force-data=data/config.json,data/roster.json
+#                 明確允許覆蓋指定的 data/ 檔案。安全鎖原本會擋下「所有」data/ 內容差異，
+#                 但我們有時就是**刻意**要改資料（例如把雲端名冊補進 repo）。
+#                 加了這個參數才會放行，而且會印出「遠端有、本機沒有」的欄位或項目，
+#                 讓覆蓋成為一個有意識、可稽核的決定，而不是靜默覆蓋。
 import base64, json, re, subprocess, sys, urllib.error, urllib.request
 from datetime import datetime, timedelta, timezone
 
 TOKEN = sys.argv[1]
 FORCE = '--force-base' in sys.argv
+FORCE_DATA = []
+for _a in sys.argv[1:]:
+    if _a.startswith('--force-data='):
+        FORCE_DATA = [x.strip() for x in _a.split('=', 1)[1].split(',') if x.strip()]
 OWNER, REPO, BRANCH = '2w2wqian-pixel', 'reading-quiz', 'main'
 API = 'https://api.github.com'
 
@@ -63,6 +72,55 @@ def blob_b64(path):
     return base64.b64encode(sh('git', 'cat-file', 'blob', 'HEAD:' + path)).decode()
 
 
+def remote_blob_text(sha):
+    j = api('GET', '/repos/%s/%s/git/blobs/%s' % (OWNER, REPO, sha))
+    if j.get('encoding') == 'base64':
+        return base64.b64decode(j['content']).decode('utf-8')
+    return j.get('content', '')
+
+
+def _keyof(item):
+    if isinstance(item, dict):
+        for k in ('id', 'username', 'name', 'title'):
+            if k in item:
+                return str(item[k])
+    return None
+
+
+def describe_loss(path, remote_sha):
+    """覆蓋前把「遠端版本 → 本機版本」的差異講清楚（尤其是會遺失的部分）。"""
+    try:
+        old = json.loads(remote_blob_text(remote_sha))
+        new = json.loads(sh('git', 'cat-file', 'blob', 'HEAD:' + path).decode('utf-8'))
+    except Exception as e:
+        print('      （無法比較內容：%s）' % e)
+        return
+    if isinstance(old, dict) and isinstance(new, dict):
+        lost = sorted(set(old) - set(new))
+        chg = sorted(k for k in set(old) & set(new) if old[k] != new[k])
+        add = sorted(set(new) - set(old))
+        if lost:
+            print('      ⚠ 遠端有、本機沒有的欄位（會遺失）：', lost)
+        if chg:
+            print('      變更欄位：', chg)
+        if add:
+            print('      新增欄位：', add)
+    elif isinstance(old, list) and isinstance(new, list):
+        o = {_keyof(x): x for x in old}
+        n = {_keyof(x): x for x in new}
+        lost = [k for k in o if k not in n]
+        add = [k for k in n if k not in o]
+        chg = [k for k in o if k in n and o[k] != n[k]]
+        if lost:
+            print('      ⚠ 遠端有、本機沒有的項目（會遺失）：', lost)
+        if chg:
+            print('      變更項目：', chg)
+        if add:
+            print('      新增項目：', add)
+    else:
+        print('      （型別不同或非 JSON：只能整檔覆蓋）')
+
+
 def main():
     head = sh('git', 'rev-parse', 'HEAD').decode().strip()
     raw = sh('git', 'cat-file', 'commit', 'HEAD').decode('utf-8')
@@ -91,11 +149,19 @@ def main():
 
     # ---- 安全鎖：data/ 底下遠端有的，本機一定要有且相同 ----
     bad = [p for p in remote if p.startswith('data/') and remote[p] != local.get(p)]
-    if bad:
+    forced = [p for p in bad if p in FORCE_DATA]
+    blocking = [p for p in bad if p not in FORCE_DATA]
+    if forced:
+        print('※ 明確允許覆蓋（--force-data）：')
+        for p in forced:
+            print('   ', p)
+            describe_loss(p, remote[p])
+    if blocking:
         print('!! 遠端 data/ 有本機沒同步的內容（老師剛發佈的試卷？），中止以免覆蓋：')
-        for p in bad[:10]:
+        for p in blocking[:10]:
             print('   ', p)
         print('   → 請先把 data/ 同步下來再發佈。')
+        print('   → 若確認要覆蓋，請加上 --force-data=' + ','.join(blocking[:4]))
         sys.exit(3)
 
     if not FORCE and base != sh('git', 'rev-parse', 'HEAD^').decode().strip():

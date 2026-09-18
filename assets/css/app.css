@@ -551,3 +551,65 @@ h1,h2,h3,h4{font-family:var(--font-ui);letter-spacing:.02em}
   object-position:50% 80%;border-bottom:1px solid var(--line);background:#F4EFE5}
 .hero-body{padding:22px 24px 24px}
 @media(max-width:640px){.hero-body{padding:18px 16px 20px}}
+
+/* ================================================================
+   自適應版面：電腦 / iPad / 手機
+   ================================================================ */
+/* --- 觸控裝置：加大可點區域 --- */
+@media (hover:none) and (pointer:coarse){
+  .btn{padding:12px 20px}
+  .btn.sm{padding:9px 14px;font-size:13.5px}
+  .btn.xs{padding:8px 11px;font-size:12.5px}
+  .nav-link{padding:9px 14px}
+  .check input{width:20px;height:20px}
+}
+
+/* --- 平板（iPad 直向／橫向） --- */
+@media (max-width:1024px){
+  .view{max-width:100%;padding:22px 18px 64px}
+  .grid.g3,.grid.g4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .hero-art{height:clamp(160px,26vw,240px)}
+}
+
+/* --- 平板以下：內嵌欄位自動換行 --- */
+@media (max-width:820px){
+  .grid.g2{grid-template-columns:1fr}
+  .inline-fields>*{flex:1 1 100%}
+  .topbar-inner{gap:10px}
+}
+
+/* --- 手機 --- */
+@media (max-width:640px){
+  body{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+  .view{padding:16px 14px 56px}
+  .topbar-inner{padding:10px 14px}
+  .brand-text small{display:none}
+  .brand-text b{font-size:15.5px}
+  .nav{margin-left:auto;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
+    max-width:100%;scrollbar-width:none}
+  .nav::-webkit-scrollbar{display:none}
+  .nav-link{padding:7px 12px;font-size:13.5px;white-space:nowrap}
+  .grid,.grid.g2,.grid.g3,.grid.g4{grid-template-columns:1fr}
+  .card{padding:16px;border-radius:16px}
+  .q{padding:15px 16px;border-radius:16px}
+  .q-stem{font-size:15.5px;line-height:1.8}
+  .hero-art{height:clamp(140px,34vw,190px)}
+  .hero-body{padding:16px}
+  h1{font-size:22px}
+  h2{font-size:18px}
+  h3{font-size:16px}
+  .row{gap:8px}
+  .stats{gap:8px}
+
+  /* 表格改為可橫向滑動，欄位不會被壓爛 */
+  .tbl,table.qtable{display:block;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .tbl th,.tbl td,table.qtable th,table.qtable td{white-space:normal}
+  .tbl th,.tbl td{min-width:64px}
+}
+
+/* --- 極窄機（iPhone SE / 舊機） --- */
+@media (max-width:380px){
+  .view{padding:14px 11px 52px}
+  .btn{padding:11px 16px;font-size:14px}
+  .stat .n{font-size:20px}
+}

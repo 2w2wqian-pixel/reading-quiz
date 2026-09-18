@@ -664,23 +664,97 @@
     },
 
     /* ---------- 學生名冊 ---------- */
+    /**
+     * 學生名冊：**三個通道全部合併**（repo 的 roster.json + 雲端 + 本機）。
+     * 一定要查 repo：學生在自己的 iPad／手機登入時，那台裝置沒有老師的
+     * Firebase 設定、也沒有本機名冊，唯一讀得到的就是 repo 的 roster.json
+     * （老師用舊版「只寫 Firebase、沒按發佈」時，學生就會看到「帳號不存在」）。
+     */
     getRoster: function () {
-      var jobs = [Store.roster.all().catch(function () { return []; }), Cloud.getAll('register')];
-      if (!Hook.ok() && !Firebase.ok()) jobs[1] = Published.roster();
-      return Promise.all(jobs).then(function (r) {
+      var local = Store.roster.all().catch(function () { return []; });
+      var cloud = (Firebase.ok() || Hook.ok())
+        ? Cloud.getAll('register').catch(function () { return []; })
+        : Promise.resolve([]);
+      var repo = Published.roster().catch(function () { return []; });
+      return Promise.all([local, cloud, repo]).then(function (r) {
         var map = {};
-        (r[1] || []).forEach(function (rec) {
-          var s = rec.payload || rec;
-          if (s && s.username) map[String(s.username).toLowerCase()] = s;
-        });
-        (r[0] || []).forEach(function (s) {
-          if (s && s.username) {
-            var k = String(s.username).toLowerCase();
-            map[k] = Object.assign({}, map[k], s);
-          }
-        });
+        function put(x) {
+          if (!x || !x.username) return;
+          var k = String(x.username).toLowerCase();
+          map[k] = Object.assign({}, map[k], x);
+        }
+        (r[2] || []).forEach(put);                                  /* repo（最舊） */
+        (r[1] || []).forEach(function (rec) { put(rec.payload || rec); });  /* 雲端 */
+        (r[0] || []).forEach(put);                                  /* 本機（最新） */
         return Object.keys(map).map(function (k) { return map[k]; });
       });
+    },
+
+    /** 把合併後的名冊同步到「雲端 + repo」，讓任何裝置都拿得到同樣的帳號 */
+    syncRoster: function () {
+      return Backend.getRoster().then(function (list) {
+        var jobs = [];
+        if (Firebase.ok() || Hook.ok()) {
+          jobs.push(list.reduce(function (acc, s) {
+            return acc.then(function () {
+              return Cloud.put(makeRec('register', s.username, null, s, { classCode: s.classCode || '' }));
+            });
+          }, Promise.resolve(true)));
+        }
+        if (GitHub.ok()) {
+          jobs.push(GitHub.write((Settings.get().gh.path || 'data') + '/roster.json', list, 'sync roster'));
+        }
+        return Promise.all(jobs).then(function () {
+          return { count: list.length, channels: jobs.length };
+        });
+      });
+    },
+
+    /* ---------- 公開執行設定（讓學生裝置／其他電腦自動完成設定） ---------- */
+    _cfgPromise: null,
+
+    /**
+     * 讀取 repo 的 data/config.json 並套用到本機設定。
+     * Firebase 的 Web API Key 與 Database URL 本來就是公開資訊
+     * （安全性靠 Realtime Database 規則），所以可以安全地放在這裡，
+     * 這樣學生用 iPad 登入時不必手動設定任何東西。
+     */
+    loadConfig: function () {
+      if (Backend._cfgPromise) return Backend._cfgPromise;
+      Backend._cfgPromise = Published._fetch('config.json').then(function (c) {
+        if (!c) return null;
+        var s = Settings.get(), patch = {};
+        var fb = c.firebase || {};
+        var cur = s.fb || {};
+        if (fb.dbUrl && fb.apiKey && fb.classCode &&
+            !(cur.dbUrl && cur.apiKey && cur.classCode)) {
+          patch.fb = { enabled: true, dbUrl: fb.dbUrl, apiKey: fb.apiKey, classCode: fb.classCode };
+        }
+        var hk = c.hook || {};
+        if (hk.postUrl && !(s.hook || {}).postUrl) patch.hook = { postUrl: hk.postUrl };
+        if (Object.keys(patch).length) Settings.set(patch);
+        return c;
+      }).catch(function () { return null; });
+      return Backend._cfgPromise;
+    },
+
+    /** 把目前的雲端設定寫進 repo 的 data/config.json（老師端專用） */
+    publishConfig: function () {
+      if (!GitHub.ok()) return Promise.reject(new Error('請先設定 GitHub（老師專區 → ⑤ 資料與同步）'));
+      var s = Settings.get();
+      var fb = s.fb || {}, hk = s.hook || {};
+      var path = (s.gh.path || 'data') + '/config.json';
+      return GitHub.readJSON(path, {}).catch(function () { return {}; }).then(function (cur) {
+        var cfg = Object.assign({}, cur || {});
+        cfg.site = cfg.site || '閱讀理解練習站';
+        cfg.version = 1;
+        cfg.quizDir = 'data/quizzes';
+        cfg.rosterPath = 'data/roster.json';
+        cfg.firebase = { dbUrl: fb.dbUrl || '', apiKey: fb.apiKey || '', classCode: fb.classCode || '' };
+        cfg.hook = { postUrl: hk.postUrl || '' };
+        cfg.updatedAt = U.nowISO();
+        return GitHub.write(path, cfg, 'publish public config');
+      }).then(function () { return true; });
     },
 
     saveStudent: function (stu) { return Backend.registerStudent(stu, true); },
@@ -699,7 +773,15 @@
       } else if (!force) {
         /* 沒有雲端也要能註冊（只存在老師這台） */
       }
-      return Promise.all(jobs).then(function () { return stu; });
+      return Promise.all(jobs).then(function () {
+        /* 自動同步名冊：新增／匯入後立刻寫進雲端與 repo，
+           學生在任何裝置登入都找得到帳號（不必再手動按「發佈到 GitHub」）。
+           老師操作（force）時等同步完成，學生自助註冊時背景進行。 */
+        if (force) return Backend.syncRoster().then(function () { return stu; })
+          .catch(function () { return stu; });
+        Backend.syncRoster().catch(function () { });
+        return stu;
+      });
     },
 
     publishRoster: function (list) {

@@ -1534,8 +1534,8 @@
             });
           }).then(function () {
             un.value = nm.value = cl.value = pw.value = '';
-            U.toast('已新增', 'ok'); draw();
-          });
+            U.toast('已新增，並已同步到雲端與 repo（學生任何裝置都能登入）', 'ok', 4200); draw();
+          }).catch(function (e) { U.toast('新增失敗：' + ((e && e.message) || e), 'bad', 4200); });
         }
       }),
       U.el('button.btn.sm.ghost', {
@@ -1558,11 +1558,10 @@
         }
       }),
       U.el('button.btn.sm.sun', {
-        text: '發佈到 GitHub', onclick: function () {
-          Backend.getRoster().then(function (l) {
-            return Backend.publishRoster(l);
-          }).then(function () { U.toast('名冊已寫入 repo 的 data/roster.json', 'ok'); })
-            .catch(function (e) { U.toast('失敗：' + e.message, 'bad'); });
+        text: '同步名冊到所有裝置', onclick: function () {
+          Backend.syncRoster().then(function (r) {
+            U.toast('名冊已同步（' + r.count + ' 人 · ' + r.channels + ' 個通道）', 'ok', 4000);
+          }).catch(function (e) { U.toast('失敗：' + e.message, 'bad'); });
         }
       })
     ]));
@@ -1650,7 +1649,13 @@
           Settings.set({ fb: { enabled: true, dbUrl: U.trim(fbUrl.value), apiKey: U.trim(fbKey.value), classCode: U.trim(fbCode.value) } });
           Backend.Cloud.test().then(function (r) {
             U.toast('雲端連線成功（' + r.driver + '）', 'ok', 3600);
-            Teacher.render(view, 'data');
+            /* 順手把公開設定寫進 repo：學生的 iPad、其他電腦一開網站就自動連上，
+               不必再手動輸入 Database URL／API Key。 */
+            return Backend.publishConfig().then(function () {
+              U.toast('已把雲端設定發佈給所有裝置', 'ok', 3600);
+            }).catch(function () {
+              U.toast('雲端可用，但未能發佈設定（請設定 GitHub 後按「發佈設定給所有裝置」）', 'bad', 5000);
+            }).then(function () { Teacher.render(view, 'data'); });
           }).catch(function (e) { U.toast('連線失敗：' + e.message, 'bad', 4200); });
         }
       }),
@@ -1658,6 +1663,14 @@
         text: '停用 Firebase', onclick: function () {
           Settings.set({ fb: { enabled: false } });
           U.toast('已停用'); Teacher.render(view, 'data');
+        }
+      }),
+      U.el('button.btn.sm.lav', {
+        text: '發佈設定給所有裝置', onclick: function () {
+          Settings.set({ fb: { enabled: true, dbUrl: U.trim(fbUrl.value), apiKey: U.trim(fbKey.value), classCode: U.trim(fbCode.value) } });
+          Backend.publishConfig().then(function () {
+            U.toast('已寫入 repo 的 data/config.json：學生用 iPad／其他電腦開網站會自動連上雲端', 'ok', 5000);
+          }).catch(function (e) { U.toast('發佈失敗：' + e.message, 'bad', 4500); });
         }
       })
     ]));

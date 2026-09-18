@@ -846,7 +846,7 @@
     function doLogin(name, pass) {
       if (!name || !pass) { U.toast('請輸入帳號與密碼', 'bad'); return; }
       U.toast('驗證中…', null, 1200);
-      Backend.getRoster().then(function (list) {
+      Backend.loadConfig().then(function () { return Backend.getRoster(); }).then(function (list) {
         var stu = list.filter(function (s) {
           return String(s.username).toLowerCase() === String(name).toLowerCase();
         })[0];
@@ -868,8 +868,7 @@
     view.innerHTML = '';
 
     view.appendChild(U.el('div.hero.mb0', {}, [
-      U.el('h1', { text: '哈囉，' + (who.name || '同學') }),
-      U.el('p', { html: '下方是你可以使用的閱讀理解試卷。作答時可以直接在文章上<b>畫重點、寫筆記、把不會的詞語收進生詞本</b>，老師會看得到。' })
+      U.el('div.hero-body', {}, [U.el('h1', { text: '哈囉，' + (who.name || '同學') })])
     ]));
 
     var box = U.el('div.mt3');

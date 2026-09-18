@@ -215,9 +215,13 @@
       U.toast('此瀏覽器不支援 IndexedDB，將改用記憶體暫存（關閉分頁即消失）', 'bad', 4200);
     }
 
-    window.addEventListener('hashchange', route);
-    if (!location.hash) location.hash = '#/';
-    route();
+    /* 先讀 repo 的公開設定（Firebase／Apps Script）：
+       學生的 iPad、其他電腦不必手動設定就能連上雲端。 */
+    Backend.loadConfig().then(function () {
+      window.addEventListener('hashchange', route);
+      if (!location.hash) location.hash = '#/';
+      route();
+    });
 
     /* 供偵錯 */
     window.RQ.debug = { store: Store, settings: Settings, backend: Backend };

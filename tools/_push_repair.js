@@ -40,8 +40,17 @@ function api(method, p, body) {
         ...(data ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } : {})
       }
     }, function (r) {
-      let b = ''; r.on('data', d => b += d);
+      /* ⚠ 一定要「先收集 Buffer 再一次性 toString('utf8')」。
+         若寫成 `let b=''; r.on('data', d => b += d)`，等於對每個 chunk 各自做
+         Buffer→string 轉換；當某個中文字的 3 個位元組剛好被 chunk 邊界切開，
+         兩半各自解碼就會變成兩個 U+FFFD（'核' → '��'）。
+         後果是「同一個中文檔名被看成兩個不同路徑」——遠端多出一個不存在
+         的幽靈檔（工具判定該刪）、真實檔（判定該改），同一次 tree 送出
+         刪除＋修改同一路徑 → GitHub 回 422 GitRPC::BadObjectState。 */
+      const chunks = [];
+      r.on('data', d => chunks.push(Buffer.isBuffer(d) ? d : Buffer.from(d)));
       r.on('end', () => {
+        const b = Buffer.concat(chunks).toString('utf8');
         let j = null; try { j = JSON.parse(b); } catch (e) { }
         if (r.statusCode >= 400) return rej(new Error('HTTP ' + r.statusCode + ' ' + p + ' :: ' + b.slice(0, 300)));
         res(j);
@@ -120,8 +129,22 @@ function walk(dir, base, out) {
   /* 「本機沒有」的檔案要從遠端刪掉（除了明確列入保留清單的）。
    * ⚠ 只做「新增／覆蓋」的推送工具會累積垃圾檔：本機刪了、遠端還在，
    *   久而久之遠端就與本機愈差愈多。刪除必須一起送出去。 */
-  const deleted = onlyRemote.filter(p => !KEEP_REMOTE.has(p));
+  const changeSet = new Set(changed.map(f => f.rel));
+  const deleted = onlyRemote.filter(p => !KEEP_REMOTE.has(p) && !changeSet.has(p));
   const kept = onlyRemote.filter(p => KEEP_REMOTE.has(p));
+
+  /* 安全網：同一次送出裡「又刪又改」同一路徑 → GitHub 會回 422。
+     正常情況不該發生；一旦發生，幾乎都是路徑本身被搞壞了（例如編碼問題
+     產生了一個與真實檔名只差幾個位元組的幽靈路徑），此時**必須中止**，
+     不可硬推——否則就是誤刪真檔。 */
+  const conflict = deleted.filter(p => changeSet.has(p));
+  if (conflict.length) {
+    console.error('\n❌ 中止：同一個路徑同時被判定為「要刪」與「要改」，這代表路徑比對有問題：');
+    conflict.forEach(p => console.error('   ', JSON.stringify(p)));
+    console.error('   （常見原因：中文檔名在傳輸中被截斷成 U+FFFD，請先檢查 api() 的編碼處理）');
+    process.exit(1);
+  }
+
   if (kept.length) {
     console.log('\n🔒 保留（本機沒有，但列在 KEEP_REMOTE）：');
     kept.forEach(p => console.log('   ', p));

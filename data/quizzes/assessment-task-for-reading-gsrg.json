@@ -1,0 +1,2157 @@
+{
+  "id": "assessment-task-for-reading-gsrg",
+  "title": "Assessment Task for Reading",
+  "level": "",
+  "subject": "英文",
+  "format": "docx",
+  "source": "2_Assessment_Task_reading_Obesity.docx",
+  "createdAt": "2026-09-20T11:28:49.565Z",
+  "updatedAt": "2026-09-20T11:28:49.566Z",
+  "published": true,
+  "passages": [
+    {
+      "id": "p1",
+      "title": "Reading Text",
+      "paragraphs": [
+        "Read the following article titled “Obesity: A Ticking Time-bomb in Hong Kong” and answer the questions that follow.",
+        "Obesity: A Ticking Time-bomb in Hong Kong[1] Obesity is defined as excessive fat in the body that may impair health. A report published by the Department of Health of the Hong Kong Government in 2016 indicated that 50% of the population aged 18-64 was classified as overweight or obese. Compared with the findings of the last large-scale health survey conducted10 years ago, the number of overweight people rose from 17.8% to 20.1%, while obesity rate increased from 21% to 29.9%. The findings also revealed an upward trend in the child and adolescent obesity rates. About one in every five children and adolescents is overweight or obese, which is alarming and requires immediate action.[2] Body mass index (BMI) is a simple index of weight-for-height commonly used to define weight groups and screen for overweight and obese individuals. In the metric system, BMI is calculated by dividing the body weight in kilograms by the square of height in metres, i.e. kg/m2. The World Health Organisation (WHO) defines an adult in Asia with BMI from 23.0 to 24.9 as overweight. An adult with BMI above 25.0 is classified as obese. While BMI is often used for assessing obesity, it has some constraints as BMI fails to take into account the body fat content, muscle mass, bone density and overall body composition of a person. For example, muscular people often have a high BMI, as muscles are heavier than fat, but they can be physically fit. Health experts, therefore, advise greater attention to the body fat percentage (BFP) in the evaluation of one’s overall fitness. Body fat helps to keep warm, protect organs and joints and build resistance to diseases. However, too much body fat, especially visceral fat accumulated in the abdominal area, increases the risk of developing heart diseases, diabetes and other health problems. Thus, it is important to monitor our BPF to ensure it stays in the healthy range, as shown in the table below:(Source: American Council on Exercise (ACE): www.acefitness.org)[3] According to WHO, the fundamental cause of people being obese and overweight is that they consume more calories than they burn. In an affluent city like Hong Kong, obesity is believed to be caused by the popularity of fast food and western food, which are  mainly energy-dense food high in saturated fat, trans fat, sugar and carbohydrates. While genetic factors may have a role to play, the more sedentary lifestyle and a lack of physical exercise are considered the major factors leading to rising obesity rates. According to official statistics, approximately 60% of the Hong Kong people did not meet the level of physical activity suggested by WHO, i.e. 150 minutes of aerobic exercise, like jogging, brisk walking and swimming, per week.[4] Obesity has damaging effects on our physical and mental health, as well as our future quality of life. It will also impact on the labour force, economy and population structure of our society. Obesity causes a lot of chronic illnesses, which include strokes, diabetes, cardiovascular diseases, hypertension, fatty liver, sleep apnoea, gallstones, as well as gout and other joint problems. Obese people are also said to be at a higher risk of suffering from some cancers, for example, breast, bowel and pancreatic cancers. Obese people tend to have lower self-esteem and are more likely to develop emotional problems such as anxiety and depression. As many of the above health and emotional problems are costly to treat, the growing obesity rate can place a huge burden on the public health care system in the long run. [5] The Hong Kong Association for the Study of Obesity calls for a multi-pronged approach to treating obesity which involves the use of medicine and surgery as well as public education to change people’s lifestyle and dietary habits. While different treatment options, for instance, medication and surgery, may help obesity sufferers, prevention is still the most effective way to tackle the problem in Hong Kong.[6] The foundation for lifelong good health is laid in childhood. To prevent obesity in the future, individuals should develop a habit of regular exercise and have a balanced diet from an early age. Schools have a pivotal role to play in improving youth health and nipping obesity in the bud before the problem takes hold. Schools should revamp their existing curriculum to enhance nutrition and physical education. A healthy lifestyle can also be promoted by surrounding students with opportunities to eat healthily and stay active on campus. For example, schools can serve wholesome food and snacks in the cafeteria and eliminate the marketing of unhealthy foods such as sugary drinks and processed meat. Wellness programmes and sports classes could also be run to engage students in high-quality and regular physical activities. [7] While WHO officially defined obesity as “a disease in which excess body fat has accumulated to such an extent that health may be adversely affected” in 2000, a recent survey has shown that more than 70% of adults in Hong Kong do not know that obesity is considered “a disease” by the world’s health watchdog. This has clearly reflected Hong Kong people’s ignorance and lack of awareness of the severity of obesity. Public education campaigns must be launched without delay to raise people’s health consciousness. Cross-sectoral action in promotion of healthy eating and physical activity is required to fight obesity and safeguard public health. The government should also step up efforts to monitor restaurants and food producers to ensure the reduced use of unhealthy ingredients and cooking methods in food production. One suggestion is to tighten food safety control and food labelling regulations to help customers make more informed choices during grocery shopping. Another feasible measure is to follow the practices of countries like Denmark and United Kingdom and impose sugar and fat taxes on unhealthy foods. [8] Obesity has reached epidemic proportions in this city. Concerted efforts and prompt action are now needed to curb the prevalence of this major health menace of the 21st century.",
+        "Women (% of fat)",
+        "Athletes",
+        "Fitness",
+        "Acceptable",
+        "Obese"
+      ],
+      "notes": []
+    }
+  ],
+  "questions": [
+    {
+      "no": 1,
+      "stem": "Explain the meaning of the title. Why is obesity “a ticking time-bomb”? (2 marks)",
+      "skills": [],
+      "marks": 2,
+      "passageIndex": 0,
+      "section": null,
+      "type": "text",
+      "options": [],
+      "subQuestions": [],
+      "table": null,
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "Obesity is compared to a ticking time-bomb in the title because it is an alarming and urgent problem that requires immediate attention.// Like a time-bomb that may explode at any time, obesity can be a health disaster and crisis that affects our life and the health care system if it is not well managed.",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q1"
+    },
+    {
+      "no": 2,
+      "stem": "From the information given in Paragraphs 1-2, decide if the following statements are True, False or Not Given. Blacken the appropriate circles. (5 marks)",
+      "skills": [],
+      "marks": 5,
+      "passageIndex": 0,
+      "section": null,
+      "type": "table",
+      "options": [],
+      "subQuestions": [
+        {
+          "id": "q2_1",
+          "label": "The percentage of children and adolescents who are classified as overweight and obese is higher than that of the adults.",
+          "prompt": "The percentage of children and adolescents who are classified as overweight and obese is higher than that of the adults.",
+          "choices": [
+            "",
+            "True",
+            "False",
+            "Not Given"
+          ],
+          "answer": "",
+          "marks": 0,
+          "kind": "tfng"
+        },
+        {
+          "id": "q2_2",
+          "label": "The adolescent obesity rate is higher than the child obesity rate.",
+          "prompt": "The adolescent obesity rate is higher than the child obesity rate.",
+          "choices": [
+            "",
+            "True",
+            "False",
+            "Not Given"
+          ],
+          "answer": "",
+          "marks": 0,
+          "kind": "tfng"
+        },
+        {
+          "id": "q2_3",
+          "label": "Women in general have a higher body fat percentage than men.",
+          "prompt": "Women in general have a higher body fat percentage than men.",
+          "choices": [
+            "",
+            "True",
+            "False",
+            "Not Given"
+          ],
+          "answer": "",
+          "marks": 0,
+          "kind": "tfng"
+        },
+        {
+          "id": "q2_4",
+          "label": "BMI is the most reliable way to assess obesity.",
+          "prompt": "BMI is the most reliable way to assess obesity.",
+          "choices": [
+            "",
+            "True",
+            "False",
+            "Not Given"
+          ],
+          "answer": "",
+          "marks": 0,
+          "kind": "tfng"
+        },
+        {
+          "id": "q2_5",
+          "label": "A person with the weight of 60kg and the height of 1.5m is considered obese according to BMI.",
+          "prompt": "A person with the weight of 60kg and the height of 1.5m is considered obese according to BMI.",
+          "choices": [
+            "",
+            "True",
+            "False",
+            "Not Given"
+          ],
+          "answer": "",
+          "marks": 0,
+          "kind": "tfng"
+        }
+      ],
+      "table": {
+        "rows": [
+          [
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "True",
+              "html": "True",
+              "visible": "True",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "False",
+              "html": "False",
+              "visible": "False",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "Not Given",
+              "html": "Not Given",
+              "visible": "Not Given",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "The percentage of children and adolescents who are classified as overweight and obese is higher than that of the adults.",
+              "html": "The percentage of children and adolescents who are classified as overweight and obese is higher than that of the adults.",
+              "visible": "The percentage of children and adolescents who are classified as overweight and obese is higher than that of the adults.",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "The adolescent obesity rate is higher than the child obesity rate.",
+              "html": "The adolescent obesity rate is higher than the child obesity rate.",
+              "visible": "The adolescent obesity rate is higher than the child obesity rate.",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "Women in general have a higher body fat percentage than men.",
+              "html": "Women in general have a higher body fat percentage than men.",
+              "visible": "Women in general have a higher body fat percentage than men.",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "BMI is the most reliable way to assess obesity.",
+              "html": "BMI is the most reliable way to assess obesity.",
+              "visible": "BMI is the most reliable way to assess obesity.",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "A person with the weight of 60kg and the height of 1.5m is considered obese according to BMI.",
+              "html": "A person with the weight of 60kg and the height of 1.5m is considered obese according to BMI.",
+              "visible": "A person with the weight of 60kg and the height of 1.5m is considered obese according to BMI.",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            }
+          ]
+        ]
+      },
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "tableType": "tfng",
+      "passageId": "p1",
+      "id": "q2"
+    },
+    {
+      "no": 3,
+      "stem": "Identify three causes of obesity from Paragraph 3. (3 marks)",
+      "skills": [],
+      "marks": 3,
+      "passageIndex": 0,
+      "section": null,
+      "type": "text",
+      "options": [],
+      "subQuestions": [],
+      "table": null,
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "genetic factors\npopularity of fast food and western food\n(the more) sedentary lifestyle and a lack of physical exercise\ncalorie consumption more than calorie burn (any 3)",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q3"
+    },
+    {
+      "no": 4,
+      "stem": "Complete the following note sheets with information from Paragraph 4. Use one word for each blank and the word may or may not appear in the paragraph. (5 marks)",
+      "skills": [],
+      "marks": 5,
+      "passageIndex": 0,
+      "section": null,
+      "type": "table",
+      "options": [],
+      "subQuestions": [
+        {
+          "id": "q4_blk_a",
+          "label": "(a)",
+          "prompt": "",
+          "answer": "chronic",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q4_blk_b",
+          "label": "(b)",
+          "prompt": "",
+          "answer": "cancers",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q4_blk_c",
+          "label": "(c)",
+          "prompt": "",
+          "answer": "depression",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q4_blk_d",
+          "label": "(d)",
+          "prompt": "",
+          "answer": "Social",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q4_blk_e",
+          "label": "(e)",
+          "prompt": "",
+          "answer": "burden",
+          "marks": 0,
+          "kind": "fill"
+        }
+      ],
+      "table": {
+        "rows": [
+          [
+            {
+              "text": "Damaging Effects of Obesity",
+              "html": "<b>Damaging Effects of Obesity</b>",
+              "visible": "Damaging Effects of Obesity",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 3,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "Physical:(a) _______ illnesses e.g. strokes, diabetes(b) ________  e.g. breast, bowel",
+              "html": "<b>Physical</b><b>:</b>(a) <u>_______</u> illnesses e.g. strokes, diabetes(b) <u>________</u>  e.g. breast, bowel",
+              "visible": "Physical:(a) _______ illnesses e.g. strokes, diabetes(b) ________        e.g. breast, bowel",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "Mental / Emotional:low self esteemanxiety(c) __________",
+              "html": "<b>M</b><b>en</b><b>tal / Emotional</b><b>:</b>low self esteemanxiety(c) __________",
+              "visible": "Mental / Emotional:low self esteemanxiety(c) __________",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "(d) __________:Impacts on labour force, economy and population structureA (e) ________ on the public health care system",
+              "html": "<b>(d) </b><b>__________</b><b>:</b>Impacts on labour force, economy and population structureA (e) ________ on the public health care system",
+              "visible": "(d) __________:Impacts on labour force, economy and population structureA (e) ________ on the public health care system",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ]
+        ]
+      },
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "_fillin": true,
+      "fillin": {
+        "text": "Damaging Effects of Obesity\nPhysical:(a) _______ illnesses e.g. strokes, diabetes(b) ________        e.g. breast, bowel  Mental / Emotional:low self esteemanxiety(c) __________  (d) __________:Impacts on labour force, economy and population structureA (e) ________ on the public health care system",
+        "blanks": [
+          {
+            "key": "a",
+            "id": "q4_blk_a",
+            "label": "(a)",
+            "answer": "chronic",
+            "marks": 0
+          },
+          {
+            "key": "b",
+            "id": "q4_blk_b",
+            "label": "(b)",
+            "answer": "cancers",
+            "marks": 0
+          },
+          {
+            "key": "c",
+            "id": "q4_blk_c",
+            "label": "(c)",
+            "answer": "depression",
+            "marks": 0
+          },
+          {
+            "key": "d",
+            "id": "q4_blk_d",
+            "label": "(d)",
+            "answer": "Social",
+            "marks": 0
+          },
+          {
+            "key": "e",
+            "id": "q4_blk_e",
+            "label": "(e)",
+            "answer": "burden",
+            "marks": 0
+          }
+        ]
+      },
+      "passageId": "p1",
+      "id": "q4"
+    },
+    {
+      "no": 5,
+      "stem": "Explain the meaning of the expression “nipping obesity in the bud” in Line 51. (2 marks)",
+      "skills": [],
+      "marks": 2,
+      "passageIndex": 0,
+      "section": null,
+      "type": "text",
+      "options": [],
+      "subQuestions": [],
+      "table": null,
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "It means curbing / stopping / eliminating (1 mark) obesity at any early stage (1 mark)",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q5"
+    },
+    {
+      "no": 6,
+      "stem": "Why does the writer think schools have a pivotal role to play in fighting obesity? (2 marks)",
+      "skills": [],
+      "marks": 2,
+      "passageIndex": 0,
+      "section": null,
+      "type": "text",
+      "options": [],
+      "subQuestions": [],
+      "table": null,
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "The writer thinks schools have a pivotal role to play in fighting obesity because foundation for lifelong good health is laid in childhood and the habit of regular exercise and a balanced diet should be developed from an early age, which is the time when kids go to school.",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q6"
+    },
+    {
+      "no": 7,
+      "stem": "Complete the following summary based on information in Paragraphs 6-8. Fill in each blank with ONE word. The word may or may not appear in the reading text. The answers must be grammatically correct. (7 marks)",
+      "skills": [],
+      "marks": 7,
+      "passageIndex": 0,
+      "section": null,
+      "type": "table",
+      "options": [],
+      "subQuestions": [
+        {
+          "id": "q7_blk_a",
+          "label": "(a)",
+          "prompt": "",
+          "answer": "efforts",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q7_blk_b",
+          "label": "(b)",
+          "prompt": "",
+          "answer": "government",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q7_blk_c",
+          "label": "(c)",
+          "prompt": "",
+          "answer": "revamping",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q7_blk_d",
+          "label": "(d)",
+          "prompt": "",
+          "answer": "marketing",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q7_blk_e",
+          "label": "(e)",
+          "prompt": "",
+          "answer": "awareness",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q7_blk_f",
+          "label": "(f)",
+          "prompt": "",
+          "answer": "strengthening",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q7_blk_g",
+          "label": "(g)",
+          "prompt": "",
+          "answer": "imposing",
+          "marks": 0,
+          "kind": "fill"
+        }
+      ],
+      "table": {
+        "rows": [
+          [
+            {
+              "text": "While combating obesity requires the joint (a) __________ of different parties, the author believes schools and the (b) __________ should take the lead. The existing school curriculum needs (c) __________ to enhance nutrition and physical education. It is also important that schools stop serving and (d) __________ unhealthy food to children. The writer thinks running wellness programmes and sports classes at school and launching public education campaigns in the city can help to raise people’s health (e) __________. He also suggests (f) _________ efforts to monitor restaurants and food producers through tightening food safety control and (g) _________ sugar and fat taxes on unhealthy foods.",
+              "html": "While combating obesity requires the joint (a) <u>__________</u> of different parties, the author believes schools and the (b) <u>__________</u> should take the lead. The existing school curriculum needs (c) <u>__________</u> to enhance nutrition and physical education. It is also important that schools stop serving and (d) <u>__________</u> unhealthy food to children. The writer thinks running wellness programmes and sports classes at school and launching public education campaigns in the city can help to raise people’s health (e) <u>__________</u>. He also suggests (f) _________ efforts to monitor restaurants and food producers through tightening food safety control and (g) _________ sugar and fat taxes on unhealthy foods.",
+              "visible": "While combating obesity requires the joint (a) __________ of different parties, the author believes schools and the (b) __________ should take the lead. The existing school curriculum needs (c) __________ to enhance nutrition and physical education. It is also important that schools stop serving and (d) __________ unhealthy food to children. The writer thinks running wellness programmes and sports classes at school and launching public education campaigns in the city can help to raise people’s health (e) __________. He also suggests (f) _________ efforts to monitor restaurants and food producers through tightening food safety control and (g) _________ sugar and fat taxes on unhealthy foods.",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ]
+        ]
+      },
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "_fillin": true,
+      "fillin": {
+        "text": "While combating obesity requires the joint (a) __________ of different parties, the author believes schools and the (b) __________ should take the lead. The existing school curriculum needs (c) __________ to enhance nutrition and physical education. It is also important that schools stop serving and (d) __________ unhealthy food to children. The writer thinks running wellness programmes and sports classes at school and launching public education campaigns in the city can help to raise people’s health (e) __________. He also suggests (f) _________ efforts to monitor restaurants and food producers through tightening food safety control and (g) _________ sugar and fat taxes on unhealthy foods.",
+        "blanks": [
+          {
+            "key": "a",
+            "id": "q7_blk_a",
+            "label": "(a)",
+            "answer": "efforts",
+            "marks": 0
+          },
+          {
+            "key": "b",
+            "id": "q7_blk_b",
+            "label": "(b)",
+            "answer": "government",
+            "marks": 0
+          },
+          {
+            "key": "c",
+            "id": "q7_blk_c",
+            "label": "(c)",
+            "answer": "revamping",
+            "marks": 0
+          },
+          {
+            "key": "d",
+            "id": "q7_blk_d",
+            "label": "(d)",
+            "answer": "marketing",
+            "marks": 0
+          },
+          {
+            "key": "e",
+            "id": "q7_blk_e",
+            "label": "(e)",
+            "answer": "awareness",
+            "marks": 0
+          },
+          {
+            "key": "f",
+            "id": "q7_blk_f",
+            "label": "(f)",
+            "answer": "strengthening",
+            "marks": 0
+          },
+          {
+            "key": "g",
+            "id": "q7_blk_g",
+            "label": "(g)",
+            "answer": "imposing",
+            "marks": 0
+          }
+        ]
+      },
+      "passageId": "p1",
+      "id": "q7"
+    },
+    {
+      "no": 8,
+      "stem": "In addition to the parties mentioned in the text, think of one more stakeholder group which can play a part in fighting obesity. Suggest one way this group can help. (2 marks)",
+      "skills": [],
+      "marks": 2,
+      "passageIndex": 0,
+      "section": null,
+      "type": "text",
+      "options": [],
+      "subQuestions": [],
+      "table": null,
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "I think parents can also play a role in fighting obesity by providing healthy meals and snacks and opportunities for daily physical activity for their kids. (Any reasonable answers are accepted)",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q8"
+    },
+    {
+      "no": 9,
+      "stem": "I think _____________ can also play a role in fighting obesity by ________________________",
+      "skills": [],
+      "marks": 0,
+      "passageIndex": 0,
+      "section": null,
+      "type": "text",
+      "options": [],
+      "subQuestions": [],
+      "table": null,
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q9"
+    },
+    {
+      "no": 10,
+      "stem": "What do the following refer to? (2 marks)",
+      "skills": [],
+      "marks": 2,
+      "passageIndex": 0,
+      "section": null,
+      "type": "table",
+      "options": [],
+      "subQuestions": [
+        {
+          "id": "q10_0_1",
+          "label": "“the world’s health watchdog” (Line 61)",
+          "prompt": "",
+          "answer": "WHO / The World Health Organisation",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q10_1_1",
+          "label": "“this major health menace of the 21st century (Lines 73-74)",
+          "prompt": "",
+          "answer": "Obesity",
+          "marks": 0,
+          "kind": "fill"
+        }
+      ],
+      "table": {
+        "rows": [
+          [
+            {
+              "text": "“the world’s health watchdog” (Line 61)",
+              "html": "“the world’s health watchdog” (Line 61)",
+              "visible": "“the world’s health watchdog” (Line 61)",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "“this major health menace of the 21st century (Lines 73-74)",
+              "html": "“this major health menace of the 21st century (Lines 73-74)",
+              "visible": "“this major health menace of the 21st century (Lines 73-74)",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ]
+        ]
+      },
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "“the world’s health watchdog” (Line 61)　WHO / The World Health Organisation\n“this major health menace of the 21st century (Lines 73-74)　Obesity",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q10"
+    },
+    {
+      "no": 11,
+      "stem": "Why is obesity described as “epidemic” in the last paragraph? (2 marks)",
+      "skills": [],
+      "marks": 2,
+      "passageIndex": 0,
+      "section": null,
+      "type": "text",
+      "options": [],
+      "subQuestions": [],
+      "table": null,
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "It shows obesity is spreading fast in Hong Kong, just like an infectious disease that attacks the city.",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q11"
+    },
+    {
+      "no": 12,
+      "stem": "Find words with the same meanings from the specified paragraphs. Use one word only for each answer. (8 marks)",
+      "skills": [],
+      "marks": 8,
+      "passageIndex": 0,
+      "section": null,
+      "type": "table",
+      "options": [],
+      "subQuestions": [
+        {
+          "id": "q12_1_1",
+          "label": "showed",
+          "prompt": "",
+          "answer": "indicated / revealed",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q12_2_1",
+          "label": "worrying",
+          "prompt": "",
+          "answer": "alarming",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q12_3_1",
+          "label": "most basic and important",
+          "prompt": "",
+          "answer": "fundamental",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q12_4_1",
+          "label": "sitting still and inactive",
+          "prompt": "",
+          "answer": "sedentary",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q12_5_1",
+          "label": "expensive",
+          "prompt": "",
+          "answer": "costly",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q12_6_1",
+          "label": "update and improve",
+          "prompt": "",
+          "answer": "revamp",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q12_7_1",
+          "label": "knowledge and understanding",
+          "prompt": "",
+          "answer": "awareness / consciousness",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q12_8_1",
+          "label": "threat or danger",
+          "prompt": "",
+          "answer": "menace",
+          "marks": 0,
+          "kind": "fill"
+        }
+      ],
+      "table": {
+        "rows": [
+          [
+            {
+              "text": "Meaning",
+              "html": "<b>Meaning</b>",
+              "visible": "Meaning",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "Word in the text",
+              "html": "<b>Word in the text</b>",
+              "visible": "Word in the text",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 2,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "showed",
+              "html": "showed",
+              "visible": "showed",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "(Paragraph 1)",
+              "html": "(Paragraph 1)",
+              "visible": "(Paragraph 1)",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "worrying",
+              "html": "worrying",
+              "visible": "worrying",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "(Paragraph 1)",
+              "html": "(Paragraph 1)",
+              "visible": "(Paragraph 1)",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "most basic and important",
+              "html": "most basic and important",
+              "visible": "most basic and important",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "(Paragraph 3)",
+              "html": "(Paragraph 3)",
+              "visible": "(Paragraph 3)",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "sitting still and inactive",
+              "html": "sitting still and inactive",
+              "visible": "sitting still and inactive",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "(Paragraph 3)",
+              "html": "(Paragraph 3)",
+              "visible": "(Paragraph 3)",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "expensive",
+              "html": "expensive",
+              "visible": "expensive",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "(Paragraph 4)",
+              "html": "(Paragraph 4)",
+              "visible": "(Paragraph 4)",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "update and improve",
+              "html": "update and improve",
+              "visible": "update and improve",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "(Paragraph 6)",
+              "html": "(Paragraph 6)",
+              "visible": "(Paragraph 6)",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "knowledge and understanding",
+              "html": "knowledge and understanding",
+              "visible": "knowledge and understanding",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "(Paragraph 7)",
+              "html": "(Paragraph 7)",
+              "visible": "(Paragraph 7)",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "threat or danger",
+              "html": "threat or danger",
+              "visible": "threat or danger",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "(Paragraph 8)",
+              "html": "(Paragraph 8)",
+              "visible": "(Paragraph 8)",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ]
+        ]
+      },
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "showed　indicated / revealed\nworrying　alarming\nmost basic and important　fundamental\nsitting still and inactive　sedentary\nexpensive　costly\nupdate and improve　revamp\nknowledge and understanding　awareness / consciousness\nthreat or danger　menace",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q12"
+    },
+    {
+      "no": 13,
+      "stem": "The following kinds of supporting details are used in the article to substantiate and strengthen the writer’s points. Identify the type of supporting details used in the parts below. (4 marks)",
+      "skills": [],
+      "marks": 4,
+      "passageIndex": 0,
+      "section": null,
+      "type": "table",
+      "options": [],
+      "subQuestions": [
+        {
+          "id": "q13_3_0",
+          "label": "4-1",
+          "prompt": "",
+          "answer": "a",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q13_4_0",
+          "label": "5-1",
+          "prompt": "",
+          "answer": "c",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q13_5_0",
+          "label": "6-1",
+          "prompt": "",
+          "answer": "b",
+          "marks": 0,
+          "kind": "fill"
+        }
+      ],
+      "table": {
+        "rows": [
+          [
+            {
+              "text": "(a) Providing statistical data(b) Quoting from authoritative figures / organisations / sources(c) Giving examples / case(s)",
+              "html": "(a) Providing statistical data(b) Quoting from authoritative figures / organisations / sources(c) Giving examples / case(s)",
+              "visible": "(a) Providing statistical data(b) Quoting from authoritative figures / organisations / sources(c) Giving examples / case(s)",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 2,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 2,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "Type of supporting details used(a / b / c)",
+              "html": "<b>Type of s</b><b>upporting details </b><b>used</b><b>(a / b / c</b><b>)</b>",
+              "visible": "Type of supporting details used(a / b / c)",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "Sentence from the text",
+              "html": "<b>Se</b><b>ntence from the text</b>",
+              "visible": "Sentence from the text",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "Compared with the findings of the last large-scale health survey conducted10 years ago, the number of overweight people rose from 17.8% to 20.1%, while obesity rate increased from 21% to 29.9%.",
+              "html": "Compared with the findings of the last large-scale health survey conducted10 years ago, the number of overweight people rose from 17.8% to 20.1%, while obesity rate increased from 21% to 29.9%.",
+              "visible": "Compared with the findings of the last large-scale health survey conducted10 years ago, the number of overweight people rose from 17.8% to 20.1%, while obesity rate increased from 21% to 29.9%.",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "Obesity causes a lot of chronic illnesses, which include strokes, diabetes, cardiovascular diseases, hypertension, fatty liver, sleep apnoea, gallstones, as well as gout and other joint problems.",
+              "html": "Obesity causes a lot of chronic illnesses, which include strokes, diabetes, cardiovascular diseases, hypertension, fatty liver, sleep apnoea, gallstones, as well as gout and other joint problems.",
+              "visible": "Obesity causes a lot of chronic illnesses, which include strokes, diabetes, cardiovascular diseases, hypertension, fatty liver, sleep apnoea, gallstones, as well as gout and other joint problems.",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "The Hong Kong Association for the Study of Obesity calls for a multi-pronged approach to treating obesity which involves the use of medicine and surgery as well as public education to change people’s lifestyle and dietary habits.",
+              "html": "The Hong Kong Association for the Study of Obesity calls for a multi-pronged approach to treating obesity which involves the use of medicine and surgery as well as public education to change people’s lifestyle and dietary habits.",
+              "visible": "The Hong Kong Association for the Study of Obesity calls for a multi-pronged approach to treating obesity which involves the use of medicine and surgery as well as public education to change people’s lifestyle and dietary habits.",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "c",
+              "html": "c",
+              "visible": "c",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "Another feasible measure is to follow the practices of countries like Denmark and United Kingdom and impose sugar and fat taxes on unhealthy foods.",
+              "html": "Another feasible measure is to follow the practices of countries like Denmark and United Kingdom and impose sugar and fat taxes on unhealthy foods.",
+              "visible": "Another feasible measure is to follow the practices of countries like Denmark and United Kingdom and impose sugar and fat taxes on unhealthy foods.",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ]
+        ]
+      },
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "4-1　a\n5-1　c\n6-1　b",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q13"
+    },
+    {
+      "no": 14,
+      "stem": "(a) Identify three organisations cited in the texts.(3 marks)",
+      "skills": [],
+      "marks": 3,
+      "passageIndex": 0,
+      "section": null,
+      "type": "text",
+      "options": [],
+      "subQuestions": [],
+      "table": null,
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "The Department of Health of the Hong Kong Government\nThe World Health Organisation (WHO)\nThe Hong Kong Association for the Study of Obesity",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q14"
+    },
+    {
+      "no": 15,
+      "stem": "(b) Why are these organisations cited as the sources of information? (2 marks)",
+      "skills": [],
+      "marks": 2,
+      "passageIndex": 0,
+      "section": null,
+      "type": "text",
+      "options": [],
+      "subQuestions": [],
+      "table": null,
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "They are cited because they are authoritative organisations with expertise in the field of health care research and education. //Their findings and views are considered official, representative and reliable, and can help to strengthen the author’s points.",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q15"
+    },
+    {
+      "no": 16,
+      "stem": "Statistics are quoted in Paragraphs 1, 3 & 7. What do they help to illustrate? (3 marks)",
+      "skills": [],
+      "marks": 3,
+      "passageIndex": 0,
+      "section": null,
+      "type": "text",
+      "options": [],
+      "subQuestions": [],
+      "table": null,
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "Statistics in Paragraph 1 help to show the alarming situation and upward trend of obesity in Hong Kong.\nStatistics in Paragraph 3 help to show the general lack of physical activity of Hong Kong people.\nStatistics in Paragraphs 7 help to show Hong Kong people’s ignorance and lack of awareness of the severity of obesity.",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q16"
+    },
+    {
+      "no": 17,
+      "stem": "Statistics in Paragraph 1 help to show ___________________________________________",
+      "skills": [],
+      "marks": 0,
+      "passageIndex": 0,
+      "section": null,
+      "type": "text",
+      "options": [],
+      "subQuestions": [],
+      "table": null,
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q17"
+    },
+    {
+      "no": 18,
+      "stem": "Statistics in Paragraph 3 help to show __________________________________________",
+      "skills": [],
+      "marks": 0,
+      "passageIndex": 0,
+      "section": null,
+      "type": "text",
+      "options": [],
+      "subQuestions": [],
+      "table": null,
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q18"
+    },
+    {
+      "no": 19,
+      "stem": "Statistics in Paragraphs 7 help to show  ________________________________________",
+      "skills": [],
+      "marks": 0,
+      "passageIndex": 0,
+      "section": null,
+      "type": "text",
+      "options": [],
+      "subQuestions": [],
+      "table": null,
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q19"
+    },
+    {
+      "no": 20,
+      "stem": "Identify the main idea / purpose of each paragraph by putting the correct letters in the brackets provided. One has been done for you as an example. (7 marks)",
+      "skills": [],
+      "marks": 7,
+      "passageIndex": 0,
+      "section": null,
+      "type": "table",
+      "options": [],
+      "subQuestions": [
+        {
+          "id": "q20_0_0",
+          "label": "1-1",
+          "prompt": "Paragraph 1  (  )",
+          "answer": "Paragraph 1  ( G )",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q20_1_0",
+          "label": "2-1",
+          "prompt": "Paragraph 2  (  )",
+          "answer": "Paragraph 2  ( C )",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q20_2_0",
+          "label": "3-1",
+          "prompt": "Paragraph 3  (  )",
+          "answer": "Paragraph 3  ( F )",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q20_3_0",
+          "label": "4-1",
+          "prompt": "Paragraph 4  (  )",
+          "answer": "Paragraph 4  ( H )",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q20_4_0",
+          "label": "5-1",
+          "prompt": "Paragraph 5  (  )",
+          "answer": "Paragraph 5  ( A )",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q20_5_0",
+          "label": "6-1",
+          "prompt": "Paragraph 6  (  )",
+          "answer": "Paragraph 6  ( D )",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q20_6_0",
+          "label": "7-1",
+          "prompt": "Paragraph 7  (  )",
+          "answer": "Paragraph 7  ( B )",
+          "marks": 0,
+          "kind": "fill"
+        },
+        {
+          "id": "q20_7_0",
+          "label": "8-1",
+          "prompt": "Paragraph 8  (  )",
+          "answer": "Paragraph 8  ( E )",
+          "marks": 0,
+          "kind": "fill"
+        }
+      ],
+      "table": {
+        "rows": [
+          [
+            {
+              "text": "Paragraph 1  (  )",
+              "html": "Paragraph 1  (  )",
+              "visible": "Paragraph 1    (   )",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "The need for comprehensive action against obesity",
+              "html": "The need for comprehensive action against obesity",
+              "visible": "The need for comprehensive action against obesity",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "Paragraph 2  (  )",
+              "html": "Paragraph 2  (  )",
+              "visible": "Paragraph 2    (   )",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "The role of the government in fighting obesity",
+              "html": "The role of the government in fighting obesity",
+              "visible": "The role of the government in fighting obesity",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "Paragraph 3  (  )",
+              "html": "Paragraph 3  (  )",
+              "visible": "Paragraph 3    (   )",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "Common indicators of obesity and their calculation",
+              "html": "Common indicators of obesity and their calculation",
+              "visible": "Common indicators of obesity and their calculation",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "Paragraph 4  (  )",
+              "html": "Paragraph 4  (  )",
+              "visible": "Paragraph 4    (   )",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "The role of school in tackling obesity",
+              "html": "The role of school in tackling obesity",
+              "visible": "The role of school in tackling obesity",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "Paragraph 5  (  )",
+              "html": "Paragraph 5  (  )",
+              "visible": "Paragraph 5    (   )",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "Appeal for immediate action",
+              "html": "Appeal for immediate action",
+              "visible": "Appeal for immediate action",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "Paragraph 6  (  )",
+              "html": "Paragraph 6  (  )",
+              "visible": "Paragraph 6    (   )",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "Main causes of obesity",
+              "html": "Main causes of obesity",
+              "visible": "Main causes of obesity",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "Paragraph 7  (  )",
+              "html": "Paragraph 7  (  )",
+              "visible": "Paragraph 7    (   )",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "The current trend of obesity in Hong Kong",
+              "html": "The current trend of obesity in Hong Kong",
+              "visible": "The current trend of obesity in Hong Kong",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "Paragraph 8  (  )",
+              "html": "Paragraph 8  (  )",
+              "visible": "Paragraph 8    (   )",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "The impact of obesity on oneself and society",
+              "html": "The impact of obesity on oneself and society",
+              "visible": "The impact of obesity on oneself and society",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ]
+        ]
+      },
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "1-1　Paragraph 1  ( G )\n2-1　Paragraph 2  ( C )\n3-1　Paragraph 3  ( F )\n4-1　Paragraph 4  ( H )\n5-1　Paragraph 5  ( A )\n6-1　Paragraph 6  ( D )\n7-1　Paragraph 7  ( B )\n8-1　Paragraph 8  ( E )",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q20"
+    },
+    {
+      "no": 21,
+      "stem": "Look at the magazine titles below. Which one would this article most likely appear in? (1 mark)",
+      "skills": [],
+      "marks": 1,
+      "passageIndex": 0,
+      "section": null,
+      "type": "mcq",
+      "options": [
+        {
+          "key": "A",
+          "text": "Women’s Health"
+        },
+        {
+          "key": "B",
+          "text": "Healthy Living Asia"
+        },
+        {
+          "key": "C",
+          "text": "The Art of Eating"
+        },
+        {
+          "key": "D",
+          "text": "Harvard Medical Journal"
+        }
+      ],
+      "subQuestions": [],
+      "table": {
+        "rows": [
+          [
+            {
+              "text": "A",
+              "html": "A",
+              "visible": "A",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "B",
+              "html": "B",
+              "visible": "B",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "C",
+              "html": "C",
+              "visible": "C",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "D",
+              "html": "D",
+              "visible": "D",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            }
+          ]
+        ]
+      },
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "multi": false,
+      "passageId": "p1",
+      "id": "q21"
+    },
+    {
+      "no": 22,
+      "stem": "Which of the following is NOT the writer’s purpose of writing this article? (1 mark)",
+      "skills": [],
+      "marks": 1,
+      "passageIndex": 0,
+      "section": null,
+      "type": "mcq",
+      "options": [
+        {
+          "key": "A",
+          "text": "to entertain readers with interesting facts about obesity"
+        },
+        {
+          "key": "B",
+          "text": "to inform readers of the situation of obesity in Hong Kong"
+        },
+        {
+          "key": "C",
+          "text": "to explain the causes and effects of obesity"
+        },
+        {
+          "key": "D",
+          "text": "to persuade people to fight obesity"
+        }
+      ],
+      "subQuestions": [],
+      "table": {
+        "rows": [
+          [
+            {
+              "text": "A",
+              "html": "A",
+              "visible": "A",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "B",
+              "html": "B",
+              "visible": "B",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "C",
+              "html": "C",
+              "visible": "C",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "D",
+              "html": "D",
+              "visible": "D",
+              "red": false,
+              "tick": false,
+              "sym": 0,
+              "span": 1,
+              "vmerge": null
+            }
+          ],
+          [
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            },
+            {
+              "text": "",
+              "html": "",
+              "visible": "",
+              "red": false,
+              "tick": false,
+              "sym": 1,
+              "span": 1,
+              "vmerge": null
+            }
+          ]
+        ]
+      },
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "multi": false,
+      "passageId": "p1",
+      "id": "q22"
+    },
+    {
+      "no": 23,
+      "stem": "What is the writer’s attitude towards the issue of obesity in Hong Kong? Support your answers with two pieces of evidence from the text. (3 marks)",
+      "skills": [],
+      "marks": 3,
+      "passageIndex": 0,
+      "section": null,
+      "type": "text",
+      "options": [],
+      "subQuestions": [],
+      "table": null,
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "The writer is deeply concerned and worried about the issue of obesity in Hong Kong and believes the problem deserves urgent attention.",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q23"
+    },
+    {
+      "no": 24,
+      "stem": "The writer is __________________________________________________________________ ____________________________________________________________________________",
+      "skills": [],
+      "marks": 0,
+      "passageIndex": 0,
+      "section": null,
+      "type": "text",
+      "options": [],
+      "subQuestions": [],
+      "table": null,
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q24"
+    },
+    {
+      "no": 25,
+      "stem": "This is reflected in the following places in the text:",
+      "skills": [],
+      "marks": 0,
+      "passageIndex": 0,
+      "section": null,
+      "type": "text",
+      "options": [],
+      "subQuestions": [],
+      "table": null,
+      "quotes": [],
+      "quotesHtml": [],
+      "answer": "the title, where the writer compares obesity to a “Ticking Time-bomb”\nthe first paragraph, where the writer describes the situation as “alarming” and calls for “immediate action”\nthe concluding paragraph where obesity is described as “epidemic” and “the major health menace of the 21st century” and the writer demands “concerted efforts and prompt action to curb the prevalence”. (Any 2)",
+      "answerKeys": [],
+      "explanation": "",
+      "_ans": "",
+      "passageId": "p1",
+      "id": "q25"
+    }
+  ],
+  "totalMarks": 64,
+  "warnings": [
+    "教師版找不到第 9 題",
+    "教師版找不到第 17 題",
+    "教師版找不到第 18 題",
+    "教師版找不到第 19 題",
+    "第 21 題未能判讀正確選項，請手動勾選",
+    "第 22 題未能判讀正確選項，請手動勾選",
+    "教師版找不到第 24 題"
+  ],
+  "stats": {
+    "blocks": 282,
+    "paras": 764,
+    "questions": 25,
+    "passages": 1,
+    "hasTeacher": false,
+    "mcq": 2,
+    "table": 7
+  }
+}

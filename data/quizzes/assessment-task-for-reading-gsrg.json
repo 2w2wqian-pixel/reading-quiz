@@ -6,7 +6,7 @@
   "format": "docx",
   "source": "2_Assessment_Task_reading_Obesity.docx",
   "createdAt": "2026-09-20T11:28:49.565Z",
-  "updatedAt": "2026-09-20T11:28:59.897Z",
+  "updatedAt": "2026-09-20T11:30:07.653Z",
   "published": true,
   "passages": [
     {
@@ -2153,5 +2153,15 @@
     "hasTeacher": false,
     "mcq": 2,
     "table": 7
+  },
+  "assignment": {
+    "all": false,
+    "ids": [
+      "stu_mu9l0nky5g0h8i"
+    ],
+    "classes": [],
+    "due": "2026-09-27",
+    "note": "",
+    "assignedAt": "2026-09-20T11:30:07.651Z"
   }
 }

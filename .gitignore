@@ -19,3 +19,10 @@ tools/_math.pdf
 tools/_shot*
 # 臨時煙霧測試腳本（跑完就丟，不是正式測試）
 tools/_smoke*.js
+
+# 測試跑出來的產物（不是正式測試頁，只是 headless 測試自動產生／複製出來的）
+# ⚠ 不要用 tools/_*.html 這種寬鬆規則：tools/_glogin.html、tools/_run_glogin.js
+#   是「真正的測試頁」，排除掉會讓全新 clone 跑不了瀏覽器測試。
+tools/_rename.html
+tools/_push_repair.js
+tools/_api_publish.py

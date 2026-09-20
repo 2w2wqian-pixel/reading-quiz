@@ -110,5 +110,20 @@
     "published": true,
     "assignment": null,
     "_src": "published"
+  },
+  {
+    "id": "assessment-task-for-reading-gsrg",
+    "title": "Assessment Task for Reading",
+    "level": "",
+    "source": "2_Assessment_Task_reading_Obesity.docx",
+    "subject": "英文",
+    "format": "docx",
+    "questionCount": 25,
+    "totalMarks": 64,
+    "passageCount": 1,
+    "createdAt": "2026-09-20T11:28:49.565Z",
+    "published": true,
+    "assignment": null,
+    "_src": "published"
   }
 ]

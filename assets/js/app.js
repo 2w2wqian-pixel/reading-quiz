@@ -133,34 +133,56 @@
       ])
     ]));
 
-    /* 可用試卷 */
+    /* 可用試卷
+     * ⚠ 首頁是「所有人都看得到」的頁面（含未登入）。
+     * 絕對不能在這裡列出所有已發佈的試卷 —— 那會讓學生不用登入、
+     * 也不必等老師指派，就能直接點進去作答。
+     * 這裡只給入口，實際看得到哪些卷由學生頁（Student.home）依指派決定。 */
     var box = U.el('div.mt3');
     view.appendChild(box);
-    Backend.listQuizzes().then(function (list) {
-      box.innerHTML = '';
-      box.appendChild(U.el('h2', { text: '可作答的試卷（' + list.length + '）' }));
-      if (!list.length) {
-        box.appendChild(U.el('div.empty', {}, [
-          U.el('div.big', { text: '📚' }),
-          U.el('small', { text: '目前沒有試卷' })
-        ]));
-        return;
-      }
-      var grid = U.el('div.grid.g3');
-      list.forEach(function (m) {
-        grid.appendChild(U.el('div.card.mb0', {}, [
-          U.el('h3.mb0', { html: U.esc(m.title) }),
-          U.el('div.tiny.muted.mt1', {
-            text: (m.level ? m.level + '・' : '') + (m.subject ? m.subject + '・' : '') +
-              (m.questionCount || 0) + ' 題・' + (m.totalMarks || 0) + ' 分'
-          }),
-          U.el('div.row.mt2', {}, [
-            U.el('a.btn.sm.primary', { href: '#/quiz/' + m.id, text: '開始作答' })
-          ])
-        ]));
-      });
-      box.appendChild(grid);
-    });
+
+    var assignOnly = Backend.policy ? Backend.policy('assignOnly') !== false : true;
+    var isTeacher = who && who.role === 'teacher';
+
+    if (isTeacher) {
+      /* 老師：顯示試卷總數當作後台概況（老師本來就該看到全部） */
+      Backend.listQuizzes().then(function (list) {
+        box.innerHTML = '';
+        box.appendChild(U.el('h2', { text: '試卷總覽（' + list.length + '）' }));
+        box.appendChild(U.el('div.tiny.muted', {
+          text: '學生看不到這份清單。請到「② 試卷管理」指派作業給學生。'
+        }));
+      }).catch(function () { });
+      return;
+    }
+
+    if (who && who.id) {
+      /* 已登入的學生：直接進到自己的作答頁（那裡只列指派的作業） */
+      box.appendChild(U.el('div.card', {}, [
+        U.el('h3.mb0', { text: '我的作業' }),
+        U.el('div.tiny.muted.mt1', {
+          text: assignOnly
+            ? '只會顯示老師指派給你的試卷。'
+            : '老師目前開放了所有已發佈的試卷。'
+        }),
+        U.el('div.row.mt2', {}, [
+          U.el('a.btn.primary.sm', { href: '#/student', text: '前往我的作業' })
+        ])
+      ]));
+      return;
+    }
+
+    /* 未登入：只顯示登入入口，不洩漏任何試卷 */
+    box.appendChild(U.el('div.card', {}, [
+      U.el('h3.mb0', { text: '請先登入' }),
+      U.el('div.tiny.muted.mt1', {
+        text: '登入後才看得到老師指派給你的試卷。'
+      }),
+      U.el('div.row.mt2', {}, [
+        U.el('a.btn.primary.sm', { href: '#/student', text: '學生登入' }),
+        U.el('a.btn.sm.ghost', { href: '#/teacher', text: '老師登入' })
+      ])
+    ]));
   }
 
   /* ============================================================
@@ -175,7 +197,7 @@
     card.appendChild(U.el('h2', { text: '設定' }));
     card.appendChild(U.el('div.infobox', {
       html: '這裡的開關是全站共用的<b>單一來源</b>（老師端的「② 試卷管理」、'
-        + '「⑤ 資料與同步」也讀寫同一組值）。改完按「儲存並套用到所有裝置」，'
+        + '「⑥ 資料與同步」也讀寫同一組值）。改完按「儲存並套用到所有裝置」，'
         + '學生在任何一台裝置開啟網站都會拿到同樣的設定。'
     }));
 
@@ -342,4 +364,6 @@
   else boot();
 
   RQ.route = route;
+  /* 首頁的試卷可見度是安全性行為，測試要能直接驅動它（見 tools/_run_teacher_vocab.js） */
+  RQ.home = home;
 })(window.RQ);

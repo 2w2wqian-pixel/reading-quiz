@@ -249,6 +249,16 @@
     return (list || []).filter(function (s) { return s && s.id === id; })[0] || null;
   }
 
+  /* 學生的班別：新的名冊用 className，舊資料可能只有 classes[]；
+     兩種都要認，否則「指派給某班」會對不到人（老師以為指派了、學生看不到）。 */
+  function studentClass(student) {
+    if (!student) return '';
+    if (student.className) return student.className;
+    var cs = student.classes;
+    if (Array.isArray(cs) && cs.length) return cs[0];
+    return '';
+  }
+
   /* ============================================================
      驅動 A：Firebase Realtime Database
      ============================================================ */
@@ -1354,7 +1364,7 @@
       if (a.all) return true;
       var sid = student && student.id;
       if (sid && (a.ids || []).indexOf(sid) >= 0) return true;
-      var cls = U.trim((student && student.className) || '');
+      var cls = U.trim(studentClass(student));
       return !!(cls && (a.classes || []).indexOf(cls) >= 0);
     },
 
@@ -1365,7 +1375,7 @@
       if (a.all) return '全班';
       var sid = student && student.id;
       if (sid && (a.ids || []).indexOf(sid) >= 0) return '指定個人';
-      var cls = U.trim((student && student.className) || '');
+      var cls = U.trim(studentClass(student));
       if (cls && (a.classes || []).indexOf(cls) >= 0) return '班別 ' + cls;
       return '';
     },
@@ -1494,6 +1504,26 @@
     /* 最近一次讀到的公開設定（設定頁用來比對「本機 vs 已發佈」） */
     _publishedConfig: null,
     _publishedPolicy: null,
+
+    /**
+     * 取「有效政策」：以**已發佈的公開政策**為準，本機設定只是後備。
+     *
+     * 為什麼不能直接讀 Settings.get().assignOnly：
+     * 那是這台裝置 localStorage 的值。學生裝置是可以被改的（開 devtools 就能改），
+     * 而「學生是否看得到所有試卷」正是我們最不希望由學生端決定的開關。
+     * repo 的 data/config.json 由老師端發佈，學生只能讀、改不動 → 那才是權威來源。
+     *
+     * 老師自己的電腦（有 GitHub Token）仍然以本機設定為準，這樣老師改完政策
+     * 可以立刻在自己的電腦上預覽效果，不必等 repo 更新。
+     */
+    policy: function (key) {
+      var pub = Backend._publishedPolicy;
+      var isTeacherDevice = !!(Settings.get().gh || {}).token;
+      if (!isTeacherDevice && pub && pub[key] != null) {
+        return pub[key];
+      }
+      return Settings.policy(key);
+    },
 
     /** 把目前的雲端設定寫進 repo 的 data/config.json（老師端專用） */
     publishConfig: function () {

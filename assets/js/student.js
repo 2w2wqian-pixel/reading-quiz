@@ -1311,8 +1311,11 @@
 
       var assignedList = quizzes.filter(isAssigned);
       /* 「指派後才看得到」：預設只顯示老師指派給我的試卷。
-         老師若把 ⑤ 的開關關掉，才會一併列出其他已發佈試卷。 */
-      var assignOnly = Settings.get().assignOnly !== false;
+         老師若把「⑥ 資料與同步」／課表上的開關關掉，才會一併列出其他已發佈試卷。
+         ⚠ 一定要走 Backend.policy()（以已發佈的 config.json 為準），
+         不能讀 Settings.get()：那是本機 localStorage，學生改得動。 */
+      var assignOnly = Backend.policy ? Backend.policy('assignOnly') !== false
+        : Settings.get().assignOnly !== false;
       var others = assignOnly ? [] : quizzes.filter(function (m) { return !isAssigned(m); });
 
       if (assignOnly && !assignedList.length) {
@@ -1383,9 +1386,22 @@
    * @param allVocab 全部生詞 [{word,note,ts,learned,...}]
    * @param dictItems 默寫範圍項目 [{word,note,addAt,done}]
    */
-  function vocabBoard(allVocab, dictItems) {
+  /**
+   * 生詞本 ＋ 默寫範圍的整塊看板。
+   *
+   * @param allVocab  生詞陣列（來自 Backend.myVocab）
+   * @param dictItems 默寫範圍項目（來自 Backend.getDictation 的 .items）
+   * @param opt       { studentId, studentName, onChanged }
+   *                  —— 老師端要管理「某位學生」時傳入 studentId；
+   *                     不傳就沿用目前登入者（學生看自己的）。
+   *                  學生的 reading 仍由 who.role 決定（學生端一律唯讀）。
+   */
+  function vocabBoard(allVocab, dictItems, opt) {
+    opt = opt || {};
     var who = Settings.who();
     var isTeacher = who && who.role === 'teacher';
+    /* 資料的歸屬者：老師端＝被選取的學生；學生端＝自己 */
+    var ownerId = opt.studentId || (who && who.id);
     var host = U.el('div.vb-board');
 
     /* 目前勾選狀態（只存在記憶體；重新繪製時依 key 保留） */
@@ -1404,7 +1420,7 @@
       var payload = words.map(function (w) {
         return { word: w, note: (byWord[w] && byWord[w].note) || '', source: '生詞本' };
       });
-      Backend.addToDictation(who.id, payload).then(function () {
+      Backend.addToDictation(ownerId, payload).then(function () {
         U.toast('已加入默寫範圍：' + words.length + ' 個詞', 'ok', 3000);
         return refresh();
       }).catch(function (e) {
@@ -1436,10 +1452,10 @@
           { label: '取消', close: true },
           {
             label: '完成並移出', kind: 'primary', onClick: function () {
-              return Backend.removeFromDictation(who.id, words)
+              return Backend.removeFromDictation(ownerId, words)
                 .then(function () {
                   /* 同步把生詞本標成已學會 → 兩邊立刻一致 */
-                  return Backend.setVocabLearned(who.id, words, true);
+                  return Backend.setVocabLearned(ownerId, words, true);
                 })
                 .then(function () {
                   words.forEach(function (w) { delete picked[w]; delete pickedDict[w]; });
@@ -1458,12 +1474,13 @@
     /* 重新載入兩邊資料後整塊重畫 —— 保證畫面＝儲存結果 */
     function refresh() {
       return Promise.all([
-        Backend.myVocab(who.id).catch(function () { return allVocab; }),
-        Backend.getDictation(who.id).catch(function () { return { items: dictItems }; })
+        Backend.myVocab(ownerId).catch(function () { return allVocab; }),
+        Backend.getDictation(ownerId).catch(function () { return { items: dictItems }; })
       ]).then(function (r) {
         allVocab = r[0] || [];
         dictItems = (r[1] && r[1].items) || [];
         paint();
+        if (opt.onChanged) opt.onChanged();
       });
     }
 
@@ -1755,13 +1772,33 @@
         quizNotFound(view, quizId);
         return;
       }
+      /* 首頁不再列出所有試卷，但學生仍可能猜到 id 直接打開 #/quiz/<id>；
+         這裡補上指派閘門，否則「只有被指派的才看得到」形同虛設。
+         ⚠ isAssigned 收的是整份試卷（它會自己找 .assignment），
+         傳 quiz.assignment 進去會永遠回 false → 連指派的卷都打不開。
+         assignOnly 關閉時（老師刻意開放）不擋。 */
+      var assignOnly = Backend.policy ? Backend.policy('assignOnly') !== false
+        : Settings.get().assignOnly !== false;
+      if (assignOnly && !Backend.isAssigned(quiz, who)) {
+        view.innerHTML = '';
+        view.appendChild(U.el('div.card.center', {}, [
+          U.el('h2', { text: '這份試卷沒有指派給你' }),
+          U.el('p.muted', { text: '請回學生專區查看老師指派的作業。' }),
+          U.el('div.row.mt2', { style: { justifyContent: 'center' } }, [
+            U.el('a.btn', { href: '#/student', text: '回學生專區' })
+          ])
+        ]));
+        return;
+      }
       var past = (r[1] || []).filter(function (s) { return s.quizId === quizId; });
       var groups = groupQuestions(quiz);
       var grouped = groups.length > 1;
       var allDone = grouped
         ? groups.every(function (g) { return isGroupSubmitted(past, g.key); })
         : past.length > 0;
-      if (allDone && !Settings.get().allowRetake) {
+      /* 同樣走權威政策：重考與否不該由學生端決定 */
+      var allowRetake = Backend.policy ? Backend.policy('allowRetake') : Settings.get().allowRetake;
+      if (allDone && !allowRetake) {
         view.innerHTML = '';
         var doneSubs = grouped
           ? groups.map(function (g) { return groupSubmission(past, g.key); }).filter(Boolean)
@@ -2302,5 +2339,8 @@
   }
 
   Student._internal = { groupQuestions: groupQuestions, isGroupSubmitted: isGroupSubmitted, scopeKey: scopeKey };
+  /* 老師端「生詞本管理」要重用同一塊看板（同一個介面、同一套資料邏輯）。
+     teacher.js 比 student.js 先載入，所以只能在**渲染時**取用，不能在載入時取。 */
+  Student.vocabBoard = vocabBoard;
   RQ.student = Student;
 })(window.RQ);

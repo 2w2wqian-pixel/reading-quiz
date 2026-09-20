@@ -8,9 +8,10 @@
   var TABS = [
     { id: 'upload', label: '① 上傳試卷' },
     { id: 'quizzes', label: '② 試卷管理' },
-    { id: 'reports', label: '③ 學生作答' },
-    { id: 'roster', label: '④ 學生名冊' },
-    { id: 'data', label: '⑤ 資料與同步' }
+    { id: 'vocab', label: '③ 生詞與默寫' },
+    { id: 'reports', label: '④ 學生作答' },
+    { id: 'roster', label: '⑤ 學生名冊' },
+    { id: 'data', label: '⑥ 資料與同步' }
   ];
 
   var Teacher = {};
@@ -214,7 +215,7 @@
       }
 
       if (!list.length) {
-        stud.appendChild(U.el('div.tiny.muted', { text: '名冊尚無學生。學生可自行註冊，或到「④ 學生名冊」新增。' }));
+        stud.appendChild(U.el('div.tiny.muted', { text: '名冊尚無學生。學生可自行註冊，或到「⑤ 學生名冊」新增。' }));
       } else {
         var byClass = {}, noClass = [];
         list.forEach(function (s) {
@@ -251,7 +252,7 @@
       body.appendChild(stud);
       if (!classBoxes.length && list.length) {
         body.appendChild(U.el('div.tiny.muted.mt1', {
-          text: '提示：學生還沒有班別，「④ 學生名冊」可以逐一設定，之後就能用班別指派。'
+          text: '提示：學生還沒有班別，「⑤ 學生名冊」可以逐一設定，之後就能用班別指派。'
         }));
       }
       body.appendChild(U.el('div.mt2', {}, [U.el('label.tiny.muted', { text: '截止日期（選填）' }), dueInp]));
@@ -424,7 +425,7 @@
     card.appendChild(U.el('div.mt2', {}, [
       U.el('label.check', { style: { display: 'flex' } }, [
         pubChk,
-        U.el('span', { text: '解析後直接發佈，讓學生立刻看到（需先在「⑤ 資料與同步」設定 GitHub 或 Firebase）' })
+        U.el('span', { text: '解析後直接發佈，讓學生立刻看到（需先在「⑥ 資料與同步」設定 GitHub 或 Firebase）' })
       ])
     ]));
 
@@ -641,7 +642,7 @@
       top.appendChild(U.el('div.warnbox.mt2', {
         html: hasCloud
           ? '📄 <b>這份試卷仍是草稿，學生還看不到。</b>確認內容無誤後，按下方「<b>發佈到 GitHub</b>」即可發佈。'
-          : '📄 <b>這份試卷仍是草稿，學生還看不到。</b>而且目前<b>尚未設定雲端</b>，請先到「<b>⑤ 資料與同步</b>」填好 GitHub（擁有者／repo／Token）或 Firebase，再回來按「<b>發佈到 GitHub</b>」發佈。'
+          : '📄 <b>這份試卷仍是草稿，學生還看不到。</b>而且目前<b>尚未設定雲端</b>，請先到「<b>⑥ 資料與同步</b>」填好 GitHub（擁有者／repo／Token）或 Firebase，再回來按「<b>發佈到 GitHub</b>」發佈。'
       }));
     }
 
@@ -1116,15 +1117,52 @@
       policyChk.checked = Settings.policy('assignOnly') !== false;
       var policyHint = U.el('span.tiny.muted', {});
       function drawPolicyHint() {
-        policyHint.textContent = policyChk.checked
+        policyHint.innerHTML = policyChk.checked
           ? '（學生端只會看到「指派給他」的試卷）'
-          : '（學生端會看到所有已發佈的試卷）';
+          : '<b style="color:var(--bad,#c0392b)">（警告：學生會看到所有已發佈的試卷，可以自由作答）</b>';
       }
       drawPolicyHint();
       policyChk.addEventListener('change', function () {
-        Settings.setPolicy({ assignOnly: policyChk.checked });
+        if (!policyChk.checked) {
+          /* 這是「讓學生可以自由作答」的開關，關掉前要明確警告。
+             用 U.modal 而非 U.confirm：取消時要把開關撥回去
+             （U.confirm 只有 onYes，沒有取消回呼）。 */
+          U.modal({
+            title: '確定要開放所有試卷嗎？',
+            width: 520,
+            body: U.el('div', {}, [
+              U.el('div', {
+                html: '關閉後，學生會看到<b>所有已發佈的試卷</b>並可自由作答，' +
+                  '等於沒有作業安排。'
+              }),
+              U.el('div.tiny.muted.mt2', {
+                html: '一般上課建議維持開啟：學生只看得到老師指派給他的試卷。' +
+                  '（此設定會同步到所有裝置）'
+              })
+            ]),
+            actions: [
+              {
+                label: '取消', close: true, onClick: function () {
+                  policyChk.checked = true; drawPolicyHint();
+                }
+              },
+              {
+                label: '仍要開放', kind: 'danger', onClick: function () {
+                  Settings.setPolicy({ assignOnly: false });
+                  drawPolicyHint();
+                  U.toast('已改為：學生看得到所有已發佈試卷', 'bad', 3600);
+                  Backend.publishConfig().then(function () {
+                    U.toast('已同步到所有裝置', 'ok', 2600);
+                  }).catch(function () { });
+                }
+              }
+            ]
+          });
+          return;
+        }
+        Settings.setPolicy({ assignOnly: true });
         drawPolicyHint();
-        U.toast(policyChk.checked ? '已改為：指派後學生才看得到' : '已改為：學生看得到所有已發佈試卷', 'ok');
+        U.toast('已改為：指派後學生才看得到', 'ok');
         /* 這個開關只存在各台裝置的 localStorage，不同步會讓學生端行為不一致 */
         Backend.publishConfig().then(function () {
           U.toast('已同步到所有裝置', 'ok', 2600);
@@ -1402,7 +1440,7 @@
           var tip = Backend.Cloud.lastSource === 'csv'
             ? '若學生剛送出，試算表 CSV 快取可能要幾分鐘才更新，請按「重新整理」或直接用上方「直接開試算表」確認。'
             : (Backend.Cloud.driver() === 'offline'
-              ? '目前沒有設定雲端，學生的作答只存在他自己的裝置上，請先到「⑤ 資料與同步」設定。'
+              ? '目前沒有設定雲端，學生的作答只存在他自己的裝置上，請先到「⑥ 資料與同步」設定。'
               : '學生送出後會出現在這裡。');
           box.appendChild(U.el('div.empty', {}, [
             U.el('div.big', { text: '📝' }),
@@ -1707,6 +1745,140 @@
   /* ============================================================
      ④ 學生名冊
      ============================================================ */
+  /* ============================================================
+     ③ 生詞與默寫 —— 老師管理「某位學生」的生詞本與默寫範圍
+     ------------------------------------------------------------
+     學生端的生詞本／默寫範圍是唯讀的；所有勾選、加入、完成默寫的
+     操作都在這裡做。看板本身重用 RQ.student.vocabBoard（同一套
+     介面與資料邏輯），只是把「資料歸屬者」換成被選取的學生。
+     ============================================================ */
+  Teacher.vocab = function (view) {
+    var box = U.el('div');
+    view.appendChild(box);
+    var state2 = { studentId: null, roster: [] };
+
+    var head = U.el('div.card');
+    head.appendChild(U.el('h2', { text: '生詞本與默寫範圍' }));
+    head.appendChild(U.el('p.tiny.muted', {
+      html: '選擇一位學生 → 勾選生詞加入默寫範圍 → 默寫結束後勾選已完成的詞批次移除。' +
+        '<br>移除只會清掉「默寫範圍」，<b>生詞本原始資料不會被刪</b>；' +
+        '這些詞會自動從「未學會」移到「已學會」。'
+    }));
+
+    var pick = U.el('div.row', { style: { gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' } });
+    var sel = U.el('select.input', { style: { minWidth: '240px' } });
+    pick.appendChild(U.el('div', {}, [
+      U.el('label.tiny.muted', { text: '選擇學生' }), sel
+    ]));
+    pick.appendChild(U.el('button.btn.sm.ghost', {
+      text: '重新整理', onclick: function () { load(true); }
+    }));
+    head.appendChild(pick);
+
+    var stat = U.el('div.tiny.muted.mt1');
+    head.appendChild(stat);
+    box.appendChild(head);
+
+    var host = U.el('div.mt2');
+    box.appendChild(host);
+
+    function fillSelect() {
+      sel.innerHTML = '';
+      if (!state2.roster.length) {
+        sel.appendChild(U.el('option', { value: '', text: '（名冊裡還沒有學生）' }));
+        return;
+      }
+      state2.roster.forEach(function (s) {
+        /* 試卷指派的班別走 className；舊名冊可能只填 classes[]，這裡一併接受，
+           否則「全選本班」會對不到人。 */
+        var cls = s.className || (s.classes && s.classes[0]) || '';
+        sel.appendChild(U.el('option', {
+          value: s.id,
+          text: (s.name || s.username || s.id) + (cls ? '（' + cls + '）' : '')
+        }));
+      });
+      if (!state2.studentId || !state2.roster.some(function (s) { return s.id === state2.studentId; })) {
+        state2.studentId = state2.roster[0].id;
+      }
+      sel.value = state2.studentId;
+    }
+
+    function drawBoard() {
+      var sid = state2.studentId;
+      if (!sid) {
+        host.innerHTML = '';
+        host.appendChild(U.el('div.empty', {}, [
+          U.el('div.big', { text: '👥' }),
+          U.el('div', { text: '尚無學生' }),
+          U.el('small', { text: '請先到「學生名冊」新增學生帳號。' })
+        ]));
+        stat.textContent = '';
+        return;
+      }
+      var stu = state2.roster.filter(function (s) { return s.id === sid; })[0] || {};
+      host.innerHTML = '';
+      host.appendChild(U.el('div.tiny.muted', {
+        text: '正在讀取 ' + (stu.name || sid) + ' 的生詞…'
+      }));
+
+      Promise.all([
+        Backend.myVocab(sid).catch(function () { return []; }),
+        Backend.getDictation(sid).catch(function () { return { items: [] }; })
+      ]).then(function (r) {
+        var vocab = r[0] || [];
+        var dict = (r[1] && r[1].items) || [];
+        var learnedN = vocab.filter(function (v) { return v.learned; }).length;
+
+        stat.innerHTML = '共 <b>' + vocab.length + '</b> 個生詞（已學會 ' + learnedN +
+          '／未學會 ' + (vocab.length - learnedN) + '）・默寫範圍 <b>' + dict.length + '</b> 個詞';
+
+        host.innerHTML = '';
+        if (!vocab.length && !dict.length) {
+          host.appendChild(U.el('div.empty', {}, [
+            U.el('div.big', { text: '📖' }),
+            U.el('div', { text: (stu.name || '這位學生') + ' 還沒有生詞' }),
+            U.el('small', { text: '學生在文章裡加入生詞後，這裡就會出現。' })
+          ]));
+          return;
+        }
+        /* 學生端元件直接重用：資料歸屬者換成這位學生 */
+        var board = RQ.student && RQ.student.vocabBoard;
+        if (!board) {
+          host.appendChild(U.el('div.warnbox', { text: '生詞看板元件載入失敗，請重新整理頁面。' }));
+          return;
+        }
+        host.appendChild(board(vocab, dict, {
+          studentId: sid,
+          onChanged: function () { load(false); }
+        }));
+      }).catch(function (e) {
+        host.innerHTML = '';
+        host.appendChild(U.el('div.warnbox', { text: '讀取失敗：' + ((e && e.message) || e) }));
+      });
+    }
+
+    function load(showToast) {
+      return Backend.getRoster().then(function (list) {
+        state2.roster = (list || []).filter(function (s) { return s && s.id; })
+          .sort(function (a, b) { return String(a.name || '').localeCompare(String(b.name || ''), 'zh'); });
+        fillSelect();
+        drawBoard();
+        if (showToast) U.toast('已重新整理', 'ok', 1600);
+      }).catch(function (e) {
+        stat.textContent = '';
+        host.innerHTML = '';
+        host.appendChild(U.el('div.warnbox', { text: '讀取名冊失敗：' + ((e && e.message) || e) }));
+      });
+    }
+
+    sel.addEventListener('change', function () {
+      state2.studentId = sel.value;
+      drawBoard();
+    });
+
+    load(false);
+  };
+
   Teacher.roster = function (view) {
     var box = U.el('div');
     view.appendChild(box);
@@ -2061,7 +2233,7 @@
       })
     ]));
     reg.appendChild(U.el('div.tiny.faint.mt2', {
-      html: '邏輯：學生自助註冊後，帳號會寫進雲端名冊 → 你在「④ 學生名冊」立刻看到 → ' +
+      html: '邏輯：學生自助註冊後，帳號會寫進雲端名冊 → 你在「⑤ 學生名冊」立刻看到 → ' +
         '學生在任何裝置用同一組帳號密碼登入，作答進度與提交結果都跟著帳號走。'
     }));
     view.appendChild(reg);
@@ -2267,6 +2439,9 @@
     }));
     view.appendChild(sync);
   };
+
+  /* 分頁表給測試與外部工具查詢（純讀取；實際渲染一律走 Teacher.render） */
+  Teacher.TABS = TABS;
 
   RQ.teacher = Teacher;
 })(window.RQ);

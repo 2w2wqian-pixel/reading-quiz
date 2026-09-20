@@ -383,7 +383,7 @@
         '會自動改成「每頁一題、顯示原頁畫面」，學生在原頁下方作答。'
     }));
 
-    var opt = { answerColor: 'FF0000', studentFile: null, teacherFile: null };
+    var opt = { answerColor: 'FF0000', studentFile: null, teacherFile: null, title: '' };
 
     /* 進階選項 */
     var adv = U.el('div.row.mt2', {});
@@ -393,6 +393,17 @@
     adv.appendChild(colorInp);
     adv.appendChild(U.el('span.tiny.faint', { text: '（教師版答案文字的顏色，預設紅色 FF0000）' }));
     card.appendChild(adv);
+
+    /* 試卷名稱（可留空＝沿用檔案裡抓到的標題） */
+    var titleInp = U.el('input.input', { placeholder: '留空＝自動沿用檔案中的標題' });
+    titleInp.addEventListener('input', function () { opt.title = U.trim(titleInp.value); });
+    card.appendChild(U.el('div.mt2', {}, [
+      U.el('label.tiny.muted', { text: '試卷名稱（可改；這裡填了就以這裡為準）' }),
+      titleInp
+    ]));
+    card.appendChild(U.el('div.tiny.faint', {
+      html: '改名<b>不會更動試卷的內部 id</b>，所以學生既有的作答記錄、指派與成績都完好如初。'
+    }));
 
     /* 年級分類（小學／中學）＋ 科目分類 */
     var metaRow = U.el('div.row.mt2', { style: { flexWrap: 'wrap', gap: '8px' } });
@@ -541,9 +552,12 @@
     }
 
     p.then(function (res) {
+      /* 老師在「試卷名稱」填了就以他填的為準（沒填才沿用檔案解析出來的標題）。
+         id 仍然由**原始標題**推導，維持既有行為、不影響任何既有連結。 */
+      var finalTitle = U.trim(opt.title) || res.title;
       var quiz = {
         id: U.slug(res.title) + '-' + Date.now().toString(36).slice(-4),
-        title: res.title,
+        title: finalTitle,
         level: opt.level || res.level || '',
         subject: opt.subject || res.subject || '',
         format: res.mode === 'image' ? 'pdf-image' : (res.mode === 'text' ? 'pdf-text' : 'docx'),
@@ -649,6 +663,24 @@
       U.el('button.btn.danger', { text: '刪除試卷', onclick: remove })
     ]);
     top.appendChild(acts);
+
+    /* 改名：本機儲存和「直接更新 GitHub」是兩件事，所以單獨一顆按鈕，
+       讓老師清楚知道改名會不會同步出去（已發佈的試卷才需要推上去）。 */
+    var renameBar = U.el('div.mt2.row', {}, [
+      U.el('button.btn.sm', {
+        text: '只改這台裝置的名稱', onclick: function () {
+          save();
+        }
+      }),
+      U.el('button.btn.sm.sun', {
+        text: '改名並更新 GitHub', onclick: renameRemote
+      })
+    ]);
+    top.appendChild(renameBar);
+    top.appendChild(U.el('div.tiny.faint', {
+      html: '改名<b>不會更動試卷 id</b>（檔名不變），學生既有的作答、指派與成績都不受影響。' +
+        '「更新 GitHub」＝把新名稱寫進試卷檔與清單，學生重新載入就會看到新名稱。'
+    }));
     view.appendChild(top);
 
     /* 文章 */
@@ -736,6 +768,65 @@
         Store.quiz.del(quiz.id).then(function () {
           U.toast('已刪除'); location.hash = '#/teacher/quizzes';
         });
+      });
+    }
+
+    /**
+     * 改名並直接更新 GitHub。
+     * 為什麼不能只呼叫 publishQuiz：
+     *  已發佈的試卷要動的是「既有的那份檔案與清單項目」，不是新建一份；
+     *  而且老師可能只想改名、不想連帶調整指派或重寫整包。
+     * 這裡刻意只做兩件事：寫回試卷本體、更新 quizzesIndex 的名稱。
+     */
+    function renameRemote() {
+      (quiz.questions || []).forEach(syncAnswerKeys);
+      var newTitle = U.trim(tInp.value);
+      if (!newTitle) { U.toast('請先填寫試卷名稱', 'bad'); return; }
+      var oldTitle = quiz.title;
+      if (newTitle === oldTitle) { U.toast('名稱沒有改變', 'bad'); return; }
+
+      if (!Backend.GitHub.ok()) {
+        /* 沒有 GitHub 就退回「本機／雲端」儲存：仍然有用，只是推不到 repo。
+           雲端（Firebase）那份也一起更新，學生從雲端清單看到的名稱才會跟著變。 */
+        quiz.title = newTitle;
+        quiz.level = U.trim(lInp.value);
+        quiz.subject = subSel.value;
+        quiz.updatedAt = U.nowISO();
+        Store.quiz.save(quiz).then(function () {
+          U.toast('已改名（僅本機，未設定 GitHub 無法更新 repo）', 'bad', 5000);
+          refresh();
+        });
+        return;
+      }
+
+      /* 草稿還沒發佈過 → 改名只存本機，不要因為改個名字就把草稿推上線。
+         （學生不該看到一份老師還沒確認內容的試卷。） */
+      if (!quiz.published) {
+        quiz.title = newTitle;
+        quiz.level = U.trim(lInp.value);
+        quiz.subject = subSel.value;
+        quiz.updatedAt = U.nowISO();
+        Store.quiz.save(quiz).then(function () {
+          U.toast('已改名（這份仍是草稿，尚未發佈給學生）', 'ok', 4200);
+          refresh();
+        });
+        return;
+      }
+
+      quiz.title = newTitle;
+      quiz.level = U.trim(lInp.value);
+      quiz.subject = subSel.value;
+      quiz.updatedAt = U.nowISO();
+      U.toast('正在更新 GitHub…', 'ok', 1600);
+
+      Store.quiz.save(quiz).then(function () {
+        return Backend.publishQuiz(quiz);
+      }).then(function () {
+        U.toast('已改名並更新 GitHub：「' + newTitle + '」', 'ok', 4200);
+        refresh();
+      }).catch(function (e) {
+        U.toast('改名失敗：' + ((e && e.message) || e) + '（本機名稱已更新）', 'bad', 6000);
+        refresh();
       });
     }
   }
@@ -1093,6 +1184,10 @@
           }
         });
         ops.appendChild(pubBtn);
+        ops.appendChild(U.el('button.btn.xs', {
+          text: '改名', style: { marginLeft: '4px' },
+          onclick: function () { renameQuick(m, view); }
+        }));
         ops.appendChild(U.el('button.btn.xs.lav', {
           text: a ? '改指派' : '指派', style: { marginLeft: '4px' },
           onclick: function () { Backend.getQuiz(m.id).then(function (q) { assignDialog(q || m, function () { view.innerHTML = ''; Teacher.quizzes(view); }); }); }
@@ -1133,6 +1228,64 @@
       box.appendChild(U.el('div.tbl-wrap', {}, [tbl]));
     });
   };
+
+  /**
+   * 清單頁的快速改名。
+   * 只動 title（id／檔名不變）→ 學生既有作答、指派、成績全部不受影響。
+   * 已發佈的試卷會連同 GitHub 一起更新；草稿只改本機（不該因為改名就把草稿推上線）。
+   */
+  function renameQuick(meta, view) {
+    var inp = U.el('input.input', { value: meta.title || '' });
+    var msg = U.el('div.tiny.mt1.muted', {});
+    function paint() {
+      var v = U.trim(inp.value);
+      if (!v) { msg.innerHTML = '<span style="color:var(--bad,#c0392b)">請填寫名稱</span>'; return; }
+      if (v === meta.title) { msg.textContent = '名稱沒有改變'; return; }
+      msg.innerHTML = meta.published
+        ? '將更新 GitHub 上的試卷檔與清單，學生重新載入就會看到新名稱。'
+        : '這份是<b>草稿</b>，只會改本機名稱（不會發佈給學生）。';
+    }
+    inp.addEventListener('input', paint);
+    paint();
+
+    U.modal({
+      title: '修改試卷名稱',
+      width: 520,
+      body: U.el('div', {}, [
+        U.el('div.tiny.muted.mb1', { text: '目前名稱：' + (meta.title || '（未命名）') }),
+        U.el('label.tiny.muted', { text: '新名稱' }),
+        inp,
+        msg,
+        U.el('div.tiny.faint.mt2', {
+          text: '改名不會更動試卷 id（檔名不變），學生的作答記錄與指派都不受影響。'
+        })
+      ]),
+      actions: [
+        { label: '取消', close: true },
+        {
+          label: '儲存', kind: 'primary', onClick: function () {
+            var v = U.trim(inp.value);
+            if (!v || v === meta.title) { paint(); return false; }
+            Backend.getQuiz(meta.id).then(function (q) {
+              if (!q) throw new Error('找不到試卷內容');
+              q.title = v;
+              q.updatedAt = U.nowISO();
+              return Store.quiz.save(q).then(function () {
+                if (meta.published && Backend.GitHub.ok()) return Backend.publishQuiz(q);
+                return null;
+              });
+            }).then(function (published) {
+              U.toast(published ? '已改名並更新 GitHub：「' + v + '」' : '已改名（僅本機／雲端）', 'ok', 4200);
+              view.innerHTML = ''; Teacher.quizzes(view);
+            }).catch(function (e) {
+              U.toast('改名失敗：' + ((e && e.message) || e), 'bad', 6000);
+              view.innerHTML = ''; Teacher.quizzes(view);
+            });
+          }
+        }
+      ]
+    });
+  }
 
   /* ============================================================
      ③ 學生作答報表

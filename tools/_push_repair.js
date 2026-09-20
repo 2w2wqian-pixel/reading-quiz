@@ -74,9 +74,16 @@ const SKIP_DIRS = new Set(['.git', 'node_modules', '.workbuddy', '_archive', '.r
 const SKIP_EXT = new Set(['.log', '.bak', '.tmp']);
 
 /* 遠端要保留、但本機本來就沒有的檔案（「本機沒有」不等於「該刪」）。
- * ⚠ 必須是精確路徑，不要用目錄前綴，否則會整批保留下來。 */
+ * ⚠ 必須是精確路徑，不要用目錄前綴，否則會整批保留下來。
+ *
+ * 這裡的每一筆都是一次真實的踩雷：這些試卷是由「其他裝置」用瀏覽器端的
+ * 發佈功能寫進 repo 的，本機從來沒有它們；一旦本機推送，就會被當成垃圾刪掉。
+ * 凡是「可能在別的裝置上產生」的檔案，都應該列進來。 */
 const KEEP_REMOTE = new Set([
-  'data/quizzes/中二試卷-07-閱讀能力考核-ykbl.json'
+  'data/quizzes/中二試卷-07-閱讀能力考核-ykbl.json',
+  'data/quizzes/assessment-task-for-reading-epf2.json',
+  'data/quizzes/assessment-task-for-reading-ern6.json',
+  'data/quizzes/assessment-task-for-reading-gsrg.json'
 ]);
 
 function walk(dir, base, out) {

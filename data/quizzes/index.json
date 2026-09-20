@@ -123,7 +123,16 @@
     "passageCount": 1,
     "createdAt": "2026-09-20T11:28:49.565Z",
     "published": true,
-    "assignment": null,
+    "assignment": {
+      "all": false,
+      "ids": [
+        "stu_mu9l0nky5g0h8i"
+      ],
+      "classes": [],
+      "due": "2026-09-27",
+      "note": "",
+      "assignedAt": "2026-09-20T11:30:07.651Z"
+    },
     "_src": "published"
   }
 ]

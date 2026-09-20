@@ -662,3 +662,25 @@ h1,h2,h3,h4{font-family:var(--font-ui);letter-spacing:.02em}
 /* ---------- 診斷報告：失敗標籤 ---------- */
 .tag.bad{background:#F7EBE8;border-color:#E6CFC9;color:#9A5F57}
 .tbl td .tiny{color:var(--ink-soft)}
+
+/* ================================================================
+   生詞本 ＋ 默寫範圍（並排看板）
+   ---------------------------------------------------------------
+   桌機左右並排；窄螢幕自動改成上下堆疊（沿用站上既有的斷點習慣）。
+   只新增 class，不動既有樣式。
+   ================================================================ */
+.vb-board{
+  display:grid;
+  grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);
+  gap:14px;
+  align-items:start;
+}
+.vb-board .vb-col{min-width:0}
+/* 勾選框不要被壓扁；列內文字可換行 */
+.vb-board input[type="checkbox"]{width:17px;height:17px;flex:0 0 auto;cursor:pointer}
+.vb-board .row.between{align-items:center}
+.vb-board .row.between span.tiny{text-align:right}
+
+@media (max-width:1024px){
+  .vb-board{grid-template-columns:1fr}
+}

@@ -64,6 +64,12 @@ function gitBlobSha(buf) {
 const SKIP_DIRS = new Set(['.git', 'node_modules', '.workbuddy', '_archive', '.rq_backup']);
 const SKIP_EXT = new Set(['.log', '.bak', '.tmp']);
 
+/* 遠端要保留、但本機本來就沒有的檔案（「本機沒有」不等於「該刪」）。
+ * ⚠ 必須是精確路徑，不要用目錄前綴，否則會整批保留下來。 */
+const KEEP_REMOTE = new Set([
+  'data/quizzes/中二試卷-07-閱讀能力考核-ykbl.json'
+]);
+
 function walk(dir, base, out) {
   for (const name of fs.readdirSync(dir)) {
     const full = path.join(dir, name);
@@ -111,23 +117,44 @@ function walk(dir, base, out) {
   console.log('\n需要推送：' + changed.length + ' 個檔案');
   changed.forEach(f => console.log('   M', f.rel));
 
-  if (!changed.length) { console.log('\n已經完全同步，不需推送。'); return; }
+  /* 「本機沒有」的檔案要從遠端刪掉（除了明確列入保留清單的）。
+   * ⚠ 只做「新增／覆蓋」的推送工具會累積垃圾檔：本機刪了、遠端還在，
+   *   久而久之遠端就與本機愈差愈多。刪除必須一起送出去。 */
+  const deleted = onlyRemote.filter(p => !KEEP_REMOTE.has(p));
+  const kept = onlyRemote.filter(p => KEEP_REMOTE.has(p));
+  if (kept.length) {
+    console.log('\n🔒 保留（本機沒有，但列在 KEEP_REMOTE）：');
+    kept.forEach(p => console.log('   ', p));
+  }
+  if (deleted.length) {
+    console.log('\n需要刪除（遠端有、本機已移除）：' + deleted.length + ' 個');
+    deleted.forEach(p => console.log('   D', p));
+  }
 
-  /* 建立新 tree：以遠端 tree 為 base，只覆蓋差異檔 */
+  if (!changed.length && !deleted.length) { console.log('\n已經完全同步，不需推送。'); return; }
+
+  /* 建立新 tree：以遠端 tree 為 base，覆蓋差異檔、並用 sha:null 刪除多餘檔 */
   const entries = [];
   for (const f of changed) {
     const blob = await api('POST', '/repos/' + OWNER + '/' + REPO + '/git/blobs',
       { content: fs.readFileSync(f.full).toString('base64'), encoding: 'base64' });
     entries.push({ path: f.rel, mode: '100644', type: 'blob', sha: blob.sha });
   }
+  for (const p of deleted) {
+    entries.push({ path: p, mode: '100644', type: 'blob', sha: null });
+  }
 
   const newTree = await api('POST', '/repos/' + OWNER + '/' + REPO + '/git/trees',
     { base_tree: remoteTree, tree: entries });
-  console.log('\n新 tree =', newTree.sha.slice(0, 8), '（遠端原有的 tools/ 等都會保留）');
+  console.log('\n新 tree =', newTree.sha.slice(0, 8),
+    '（遠端原有的檔案保留，', deleted.length, '個已刪除）');
 
-  let message = '新增 Google 帳號登入入口 ＋ 設定來源統一（雲端／本機一致性）';
+  let message = '學生端新增「默寫範圍」板塊 ＋ 修復移除生詞後主頁不同步';
   const msgFile = path.join(ROOT, '.git', 'COMMIT_EDITMSG');
-  try { message = fs.readFileSync(msgFile, 'utf8').trim(); } catch (e) { }
+  try {
+    const m = fs.readFileSync(msgFile, 'utf8').trim();
+    if (m) message = m;
+  } catch (e) { }
 
   const now = Math.floor(Date.now() / 1000);
   const who = { name: '2w2wqian-pixel', email: 'teacher@example.com', date: new Date().toISOString() };

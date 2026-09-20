@@ -1243,11 +1243,15 @@
       Backend.listQuizzes(),
       Backend.mySubmissions(who.id).catch(function () { return Store.submission.ofStudent(who.id); }),
       Backend.myVocab(who.id).catch(function () { return []; }),
-      Backend.getRoster().catch(function () { return []; })
+      Backend.getRoster().catch(function () { return []; }),
+      Backend.getDictation(who.id).catch(function () { return { items: [] }; })
     ]).then(function (r) {
       var quizzes = r[0].filter(function (q) { return q.published !== false || q._src === 'local'; });
       var mine = r[1] || [];
       var myVocab = r[2] || [];
+      var dictation = r[4] || { items: [] };
+      /* 生詞本＋默寫範圍組成的整體看板（老師可操作、學生唯讀） */
+      function board() { return vocabBoard(myVocab, dictation.items); }
       /* 班別可能被老師改過 → 以名冊的最新值為準，否則「依班別指派」的作業會看不到 */
       var fromRoster = (r[3] || []).filter(function (s) { return s && s.id === who.id; })[0] || {};
       var me = { id: who.id, className: U.trim(fromRoster.className || who.className || '') };
@@ -1318,7 +1322,7 @@
           U.el('small', { text: '老師指派作業後，這裡就會出現，並顯示截止日期。' })
         ]));
         box.appendChild(U.el('h2.mt3', { text: '我的生詞本' }));
-        box.appendChild(vocabBook(myVocab));
+        box.appendChild(board());
         return;
       }
 
@@ -1363,30 +1367,285 @@
 
       /* 生詞本（合併：已提交的作答 + 作答中的草稿；本機 + 雲端） */
       box.appendChild(U.el('h2.mt3', { text: '我的生詞本' }));
-      box.appendChild(vocabBook(myVocab));
+      box.appendChild(board());
     });
   };
 
-  /** vocab：生詞陣列 [{word, note, ts, ...}]（已由 Backend.myVocab 去重合併） */
-  function vocabBook(vocab) {
-    var words = (vocab || []).filter(function (v) { return v && U.trim(v.word || ''); });
-    if (!words.length) {
-      return U.el('div.empty', {}, [
-        U.el('div.big', { text: '🔖' }),
-        U.el('small', { text: '還沒有收集生詞。作答時選取不懂的詞語，按「加入生詞本」即可。' })
-      ]);
+  /**
+   * 生詞本 ＋ 默寫範圍的整體看板。
+   *
+   * 版面：桌機左右並排（生詞本｜默寫範圍），窄螢幕自動上下堆疊。
+   * 權限：**只有老師**看得到勾選框與操作鈕；學生一律唯讀。
+   *
+   * 資料流：兩個板塊都由 `Backend` 讀寫，操作後**重新繪製**（不只手動改 DOM），
+   * 所以畫面與實際儲存結果永遠一致，重新整理後也一樣。
+   *
+   * @param allVocab 全部生詞 [{word,note,ts,learned,...}]
+   * @param dictItems 默寫範圍項目 [{word,note,addAt,done}]
+   */
+  function vocabBoard(allVocab, dictItems) {
+    var who = Settings.who();
+    var isTeacher = who && who.role === 'teacher';
+    var host = U.el('div.vb-board');
+
+    /* 目前勾選狀態（只存在記憶體；重新繪製時依 key 保留） */
+    var picked = {};        // 生詞本勾選：word → true
+    var pickedDict = {};    // 默寫範圍勾選：word → true
+
+    function wordsOf(list) {
+      return (list || []).filter(function (v) { return v && U.trim(v.word || ''); });
     }
-    var wrap = U.el('div.card');
-    words.forEach(function (v) {
-      wrap.appendChild(U.el('div.row.between', {
-        style: { borderBottom: '1px dashed var(--line)', padding: '6px 0' }
-      }, [
-        U.el('b', { text: v.word }),
-        U.el('span.tiny.muted', { text: v.note || '' })
+
+    function addToDict() {
+      var words = Object.keys(picked).filter(function (w) { return picked[w]; });
+      if (!words.length) { U.toast('請先勾選要加入的生詞', 'bad', 2600); return; }
+      var byWord = {};
+      wordsOf(allVocab).forEach(function (v) { byWord[U.trim(v.word)] = v; });
+      var payload = words.map(function (w) {
+        return { word: w, note: (byWord[w] && byWord[w].note) || '', source: '生詞本' };
+      });
+      Backend.addToDictation(who.id, payload).then(function () {
+        U.toast('已加入默寫範圍：' + words.length + ' 個詞', 'ok', 3000);
+        return refresh();
+      }).catch(function (e) {
+        U.toast('加入失敗：' + ((e && e.message) || e), 'bad', 5200);
+      });
+    }
+
+    /**
+     * 批次刪除默寫範圍中「已勾選」的項目。
+     * 依需求：只移除默寫範圍裡的項目，生詞本原始資料不動；
+     * 但這些詞會被標成「已學會」→ 生詞本自動從未學會移入已學會。
+     */
+    function removeDone() {
+      var words = Object.keys(pickedDict).filter(function (w) { return pickedDict[w]; });
+      if (!words.length) { U.toast('請先勾選已完成的詞', 'bad', 2600); return; }
+
+      U.modal({
+        title: '完成默寫',
+        width: 520,
+        body: U.el('div', {}, [
+          U.el('div', { html: '將從默寫範圍移除 <b>' + words.length + '</b> 個詞：' }),
+          U.el('div.pill-input.mt1', { text: words.join('、') }),
+          U.el('div.tiny.muted.mt2', {
+            html: '這些詞會標記為<b>已學會</b>，並從生詞本的「未學會」移到「已學會」。' +
+              '生詞本本身的資料不會被刪除。'
+          })
+        ]),
+        actions: [
+          { label: '取消', close: true },
+          {
+            label: '完成並移出', kind: 'primary', onClick: function () {
+              return Backend.removeFromDictation(who.id, words)
+                .then(function () {
+                  /* 同步把生詞本標成已學會 → 兩邊立刻一致 */
+                  return Backend.setVocabLearned(who.id, words, true);
+                })
+                .then(function () {
+                  words.forEach(function (w) { delete picked[w]; delete pickedDict[w]; });
+                  U.toast('已完成默寫：' + words.length + ' 個詞移入「已學會」', 'ok', 3600);
+                  return refresh();
+                })
+                .catch(function (e) {
+                  U.toast('操作失敗：' + ((e && e.message) || e), 'bad', 5200);
+                });
+            }
+          }
+        ]
+      });
+    }
+
+    /* 重新載入兩邊資料後整塊重畫 —— 保證畫面＝儲存結果 */
+    function refresh() {
+      return Promise.all([
+        Backend.myVocab(who.id).catch(function () { return allVocab; }),
+        Backend.getDictation(who.id).catch(function () { return { items: dictItems }; })
+      ]).then(function (r) {
+        allVocab = r[0] || [];
+        dictItems = (r[1] && r[1].items) || [];
+        paint();
+      });
+    }
+
+    function checkRow(opts) {
+      var cb = U.el('input', { type: 'checkbox' });
+      cb.checked = !!opts.checked;
+      cb.addEventListener('change', function () { opts.onChange(cb.checked); });
+      cb.style.marginRight = '8px';
+      cb.style.flex = '0 0 auto';
+      return cb;
+    }
+
+    function paint() {
+      host.innerHTML = '';
+      var learned = wordsOf(allVocab).filter(function (v) { return v.learned; });
+      var unlearned = wordsOf(allVocab).filter(function (v) { return !v.learned; });
+
+      /* ── 左：生詞本 ── */
+      var left = U.el('div.card.vb-col');
+      left.appendChild(U.el('div.row.between', {}, [
+        U.el('h3.mb0', { text: '生詞本' }),
+        U.el('span.tiny.muted', { text: '共 ' + (learned.length + unlearned.length) + ' 個詞' })
       ]));
-    });
-    return wrap;
+
+      /* 未學會 */
+      var unHead = U.el('div.row.between.mt2', {}, [
+        U.el('b', { text: '未學會' }),
+        U.el('span.tag.sun', { text: String(unlearned.length) })
+      ]);
+      left.appendChild(unHead);
+      if (!unlearned.length) {
+        left.appendChild(U.el('div.tiny.muted.mt1', { text: '沒有未學會的生詞。' }));
+      } else {
+        var allUn = U.el('div.mt1');
+        if (isTeacher) {
+          var allCb = U.el('input', { type: 'checkbox' });
+          allCb.checked = unlearned.every(function (v) { return picked[U.trim(v.word)]; });
+          allCb.addEventListener('change', function () {
+            var on = allCb.checked;
+            unlearned.forEach(function (v) {
+              var w = U.trim(v.word);
+              if (on) picked[w] = true; else delete picked[w];
+            });
+            paint();
+          });
+          var allLab = U.el('label.row.tiny', {
+            style: { cursor: 'pointer', marginBottom: '4px', alignItems: 'center' }
+          }, [allCb, U.el('span', { text: '全選／取消全選' })]);
+          allUn.appendChild(allLab);
+        }
+        unlearned.forEach(function (v) {
+          var w = U.trim(v.word);
+          var row = U.el('div.row.between', {
+            style: { borderBottom: '1px dashed var(--line)', padding: '6px 0', alignItems: 'center' }
+          });
+          var main = U.el('div.row', { style: { alignItems: 'center', minWidth: '0' } });
+          if (isTeacher) {
+            main.appendChild(checkRow({
+              checked: !!picked[w],
+              onChange: function (on) { if (on) picked[w] = true; else delete picked[w]; paint(); }
+            }));
+          }
+          main.appendChild(U.el('b', { text: w }));
+          row.appendChild(main);
+          row.appendChild(U.el('span.tiny.muted', { text: v.note || '' }));
+          allUn.appendChild(row);
+        });
+        left.appendChild(allUn);
+      }
+
+      /* 已學會 */
+      left.appendChild(U.el('div.row.between.mt2', {}, [
+        U.el('b', { text: '已學會' }),
+        U.el('span.tag.mint', { text: String(learned.length) })
+      ]));
+      if (!learned.length) {
+        left.appendChild(U.el('div.tiny.muted.mt1', { text: '完成默寫後，詞語會自動移到這裡。' }));
+      } else {
+        var allLe = U.el('div.mt1');
+        learned.forEach(function (v) {
+          allLe.appendChild(U.el('div.row.between', {
+            style: { borderBottom: '1px dashed var(--line)', padding: '6px 0', alignItems: 'center' }
+          }, [
+            U.el('div.row', { style: { alignItems: 'center' } }, [
+              U.el('span', { text: '✓', style: { marginRight: '8px', color: 'var(--ok,#2e7d5b)' } }),
+              U.el('b', { text: U.trim(v.word) })
+            ]),
+            U.el('span.tiny.muted', { text: v.note || '' })
+          ]));
+        });
+        left.appendChild(allLe);
+      }
+
+      /* 老師專屬：把所有勾選的生詞批次加入默寫範圍 */
+      if (isTeacher) {
+        var pickedN = Object.keys(picked).filter(function (w) { return picked[w]; }).length;
+        var bar = U.el('div.row.mt2');
+        bar.appendChild(U.el('button.btn.sm.sun', {
+          text: '加入默寫範圍' + (pickedN ? '（' + pickedN + '）' : ''),
+          onclick: addToDict
+        }));
+        left.appendChild(bar);
+        left.appendChild(U.el('div.tiny.faint.mt1', {
+          text: '勾選生詞後按「加入默寫範圍」即可批次加入。'
+        }));
+      }
+      host.appendChild(left);
+
+      /* ── 右：默寫範圍 ── */
+      var right = U.el('div.card.vb-col');
+      var items = (dictItems || []).filter(function (it) { return it && U.trim(it.word || ''); });
+      right.appendChild(U.el('div.row.between', {}, [
+        U.el('h3.mb0', { text: '默寫範圍' }),
+        U.el('span.tiny.muted', { text: items.length + ' 個詞' })
+      ]));
+
+      if (!items.length) {
+        right.appendChild(U.el('div.empty', {}, [
+          U.el('div.big', { text: '✍️' }),
+          U.el('small', {
+            text: isTeacher
+              ? '還沒有默寫範圍。在左邊勾選生詞，按「加入默寫範圍」即可。'
+              : '老師還沒有指定默寫範圍。'
+          })
+        ]));
+      } else {
+        var dn = U.el('div.mt1');
+        if (isTeacher) {
+          var allCb2 = U.el('input', { type: 'checkbox' });
+          allCb2.checked = items.every(function (it) { return pickedDict[U.trim(it.word)]; });
+          allCb2.addEventListener('change', function () {
+            var on = allCb2.checked;
+            items.forEach(function (it) {
+              var w = U.trim(it.word);
+              if (on) pickedDict[w] = true; else delete pickedDict[w];
+            });
+            paint();
+          });
+          dn.appendChild(U.el('label.row.tiny', {
+            style: { cursor: 'pointer', marginBottom: '4px', alignItems: 'center' }
+          }, [allCb2, U.el('span', { text: '全選／取消全選' })]));
+        }
+        items.forEach(function (it) {
+          var w = U.trim(it.word);
+          var row = U.el('div.row.between', {
+            style: { borderBottom: '1px dashed var(--line)', padding: '6px 0', alignItems: 'center' }
+          });
+          var main = U.el('div.row', { style: { alignItems: 'center', minWidth: '0' } });
+          if (isTeacher) {
+            main.appendChild(checkRow({
+              checked: !!pickedDict[w],
+              onChange: function (on) { if (on) pickedDict[w] = true; else delete pickedDict[w]; paint(); }
+            }));
+          }
+          main.appendChild(U.el('b', { text: w }));
+          if (it.done) main.appendChild(U.el('span.tag.mint', { text: '已完成', style: { marginLeft: '6px' } }));
+          row.appendChild(main);
+          row.appendChild(U.el('span.tiny.muted', { text: it.note || '' }));
+          dn.appendChild(row);
+        });
+        right.appendChild(dn);
+
+        if (isTeacher) {
+          var bar2 = U.el('div.row.mt2');
+          bar2.appendChild(U.el('button.btn.sm.danger', { text: '完成默寫（批次移除）', onclick: removeDone }));
+          right.appendChild(bar2);
+          right.appendChild(U.el('div.tiny.faint.mt1', {
+            text: '勾選已完成的詞後按鈕，會把它們移出默寫範圍並標記為「已學會」。'
+          }));
+        } else {
+          right.appendChild(U.el('div.tiny.faint.mt1', {
+            text: '這份清單由老師維護。完成默寫後，詞語會移到生詞本的「已學會」。'
+          }));
+        }
+      }
+      host.appendChild(right);
+    }
+
+    paint();
+    return host;
   }
+
 
   /* ============================================================
      作答頁
@@ -1592,10 +1851,12 @@
         marks: sub.marks,
         vocab: sub.vocab,
         onChange: function (marks, vocab) {
-          var grew = (vocab || []).length !== (sub.vocab || []).length;
+          /* 生詞數量「有變動」就立刻存（含雲端）——增加或**移除**都要。
+             原本只判斷 grew，導致移除生詞時被 20 秒節流吃掉，
+             學生主頁讀到的雲端資料仍是舊的、還顯示已刪掉的詞。 */
+          var changed = (vocab || []).length !== (sub.vocab || []).length;
           sub.marks = marks; sub.vocab = vocab;
-          /* 生詞有變動就立刻存（含雲端），學生專區的生詞本才馬上看得到 */
-          autosave(grew);
+          autosave(changed);
         }
       });
       _session.hls.push(hl);

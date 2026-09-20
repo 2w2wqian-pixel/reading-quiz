@@ -320,6 +320,49 @@
 
   Highlighter.prototype._fire = function () { this.onChange(this.marks, this.vocab); };
 
+  /**
+   * 移除指定的標示，**並同步移除它們在生詞本裡的對應項目**。
+   *
+   * 為什麼一定要綁在一起：marks 與 vocab 是兩個平行陣列，
+   * 而畫面上的標示（m.vocab===true）就是那個生詞的可見痕跡。
+   * 若只從 marks 移除、vocab 留著，`_fire()` 傳出去的 vocab 仍是舊的，
+   * 學生主頁的生詞本就會一直顯示「已經在文章裡刪掉」的詞。
+   * 依「同一段落且位置重疊」配對，兩邊一起刪，才不會留下孤兒生詞。
+   */
+  Highlighter.prototype._removeMarks = function (pred) {
+    var self = this;
+    var gone = this.marks.filter(pred);
+    this.marks = this.marks.filter(function (m) { return !pred(m); });
+    if (!gone.length || !this.vocab.length) return gone;
+
+    this.vocab = this.vocab.filter(function (v) {
+      return !gone.some(function (m) {
+        if (!m.vocab) return false;                       // 該標示本來就不是生詞
+        if (v.id && v.id === m.id) return true;           // 直接對應
+        /* 舊資料沒有共用 id → 用「同一段落且位置落在標示內」判斷 */
+        var sameP = (v.pidx != null && m.pidx != null)
+          ? Number(v.pidx) === Number(m.pidx)
+          : (v.pid === m.pid);
+        if (!sameP) return false;
+        if (v.start != null && m.start != null) {
+          return Number(v.start) < Number(m.end) && Number(v.end) > Number(m.start);
+        }
+        /* 連位置都沒有（極舊資料）→ 同段落且詞語相同才移除 */
+        return !!v.word && self._markText(m) === U.trim(v.word);
+      });
+    });
+    return gone;
+  };
+
+  /** 取得標示的字面文字（新版有存 text，舊版沒有則從文章切出來） */
+  Highlighter.prototype._markText = function (m) {
+    if (m.text) return m.text;
+    var paras = (this.passage && this.passage.paragraphs) || [];
+    var t = paras[m.pidx];
+    if (typeof t !== 'string') return '';
+    return t.slice(m.start, m.end);
+  };
+
   Highlighter.prototype._addMarks = function (color) {
     var segs = this._pending;
     if (!segs) return;
@@ -408,23 +451,31 @@
           label: '加入', kind: 'primary', onClick: function () {
             var w = U.trim(inp.value);
             if (!w) return false;
-            /* 在文章中也標起來（波浪線） */
+            /* 生詞項目與它在文章中的標示共用同一個 id →
+               日後在文章裡刪掉標示時，才能精準地把生詞本那一筆一起移除。 */
+            var vid = U.uid('vb');
             segs.forEach(function (sg) {
               var m = self.marks.filter(function (x) {
                 return x.pidx === sg.pidx && x.start < sg.end && x.end > sg.start;
               })[0];
               if (!m) {
                 m = {
-                  id: U.uid('mk'), pid: sg.pid, pidx: sg.pidx,
+                  id: vid, pid: sg.pid, pidx: sg.pidx,
                   start: sg.start, end: sg.end, text: sg.text,
-                  color: 'pink', note: '', vocab: true
+                  color: 'pink', note: '', vocab: true, vocabId: vid
                 };
                 self.marks.push(m);
-              } else m.vocab = true;
+              } else {
+                m.vocab = true;
+                m.vocabId = vid;
+              }
             });
             self.vocab.push({
-              id: U.uid('vb'), word: w, pid: self.passage.id,
-              pidx: segs[0].pidx, note: U.trim(note.value), ts: U.nowISO()
+              id: vid, word: w, pid: self.passage.id,
+              pidx: segs[0].pidx, start: segs[0].start, end: segs[0].end,
+              note: U.trim(note.value), ts: U.nowISO(),
+              /* 預設「未學會」；完成默寫後才移入已學會 */
+              learned: false
             });
             self.render(); self._fire();
             U.toast('已加入生詞本：' + w, 'ok');
@@ -438,8 +489,9 @@
     var segs = this._pending;
     if (!segs) return;
     var self = this;
-    this.marks = this.marks.filter(function (m) {
-      return !segs.some(function (sg) {
+    /* 用 _removeMarks → 生詞本裡的對應項目也會一起消失，兩邊即時一致 */
+    this._removeMarks(function (m) {
+      return segs.some(function (sg) {
         return sg.pidx === m.pidx && m.start < sg.end && m.end > sg.start;
       });
     });
@@ -473,7 +525,7 @@
       body: d,
       actions: [
         { label: '刪除標示', kind: 'danger', onClick: function () {
-            self.marks = self.marks.filter(function (x) { return x.id !== m.id; });
+            self._removeMarks(function (x) { return x.id === m.id; });
             self.render(); self._fire();
           } },
         { label: '取消' },

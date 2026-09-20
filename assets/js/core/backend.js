@@ -904,10 +904,29 @@
         .then(function (r) { if (!r.ok) return null; return r.json().catch(function () { return null; }); })
         .catch(function () { return null; });
     },
-    index: function () { return Published._fetch('quizzes/index.json').then(function (j) { return j || []; }); },
+    /* ⚠ 一定要保證回傳「陣列」：`j || []` 擋不住 `{}`（空物件是 truthy），
+       而 `data/*.json` 若被寫成物件、或 CDN 回了一個空物件，
+       呼叫端就會在 `.forEach` 直接爆掉，症狀是「學生主頁整頁空白」。
+       這種錯發生在載入路徑上，最難查，所以在來源頭就收斂掉。 */
+    index: function () { return Published._fetch('quizzes/index.json').then(function (j) { return arrayify(j, 'quizzes'); }); },
     quiz: function (id) { return Published._fetch('quizzes/' + encodeURIComponent(id) + '.json'); },
-    roster: function () { return Published._fetch('roster.json').then(function (j) { return j || []; }); }
+    roster: function () { return Published._fetch('roster.json').then(function (j) { return arrayify(j, 'students'); }); }
   };
+
+  /**
+   * 把「可能是陣列、可能是 {key: [...]}、可能什麼都不是」的 JSON 收斂成陣列。
+   * 遠端檔案格式不受我們控制（人手編輯、舊版程式寫的、CDN 回空物件），
+   * 所以每個讀取點都要防呆，而不是假設它一定是陣列。
+   */
+  function arrayify(j, key) {
+    if (Array.isArray(j)) return j;
+    if (!j || typeof j !== 'object') return [];
+    var v = j[key];
+    if (Array.isArray(v)) return v;
+    /* 再退一步：物件裡只有一個陣列欄位就用它 */
+    var arrays = Object.keys(j).map(function (k) { return j[k]; }).filter(Array.isArray);
+    return arrays.length === 1 ? arrays[0] : [];
+  }
 
   function metaOf(q, src) {
     return {
@@ -965,8 +984,11 @@
         Backend._cloudIndex()
       ]).then(function (r) {
         var map = {};
-        r[0].forEach(function (q) { map[q.id] = metaOf(q, 'local'); });
-        (r[2] || []).forEach(function (m) {
+        var localArr = Array.isArray(r[0]) ? r[0] : [];
+        var repoArr = Array.isArray(r[1]) ? r[1] : [];
+        var cloudArr = Array.isArray(r[2]) ? r[2] : [];
+        localArr.forEach(function (q) { if (q && q.id) map[q.id] = metaOf(q, 'local'); });
+        cloudArr.forEach(function (m) {
           if (!m || !m.id) return;
           var cur = map[m.id];
           if (!cur) { map[m.id] = Object.assign({ _src: 'cloud', _cloud: true, published: true }, m); return; }
@@ -974,7 +996,7 @@
           cur.published = true;
           if (cur._src === 'local') cur._src = 'both';
         });
-        (r[1] || []).forEach(function (m) {
+        repoArr.forEach(function (m) {
           if (!m || !m.id) return;
           var cur = map[m.id];
           if (!cur) { map[m.id] = Object.assign({ _src: 'published', _repo: true, published: true }, m); return; }
@@ -1924,7 +1946,11 @@
               if (!v || !U.trim(v.word || '')) return;
               var w = U.trim(v.word);
               if (!map[w]) map[w] = Object.assign({}, v, { word: w });
-              else if (!map[w].note && v.note) map[w].note = v.note;
+              else {
+                if (!map[w].note && v.note) map[w].note = v.note;
+                /* 任何一筆標成「已學會」就算已學會（完成默寫後才會有） */
+                if (v.learned) map[w].learned = true;
+              }
             });
           });
         }
@@ -1934,8 +1960,175 @@
       });
     },
 
-    _ghSubmissions: function (quizId) {
-      var base = (Settings.get().gh.path || 'data') + '/submissions';
+    /* ---------- 默寫範圍（老師出題用；學生唯讀） ----------
+       為什麼用「一位學生一筆清單」而不是「一個詞一筆」：
+       默寫範圍是老師手上的一張清單，會反覆批次新增／批次刪除。
+       整包存成一筆，讀取只要一次、也不會產生大量孤兒記錄。
+       鍵綁「帳號」（同草稿的作法），換裝置才看得到同一份清單。 */
+
+    /** 本機暫存鍵 */
+    _dictKey: function (studentId) { return 'dictation:' + studentId; },
+
+    /** 某位學生的默寫範圍（本機 + 雲端合併，取較新者） */
+    getDictation: function (studentId) {
+      var sid = String(studentId || '');
+      if (!sid) return Promise.resolve(Backend._normDict('', null));
+      var local = Store.kv.get(Backend._dictKey(sid), null).catch(function () { return null; });
+
+      var remote = Promise.resolve(null);
+      if (Cloud.driver() !== 'offline') {
+        remote = Backend.syncKeys(sid).then(function (ctx) {
+          var ids = [ctx.claim].concat(ctx.ids).filter(Boolean);
+          var hit = null;
+          return ids.reduce(function (acc, id) {
+            return acc.then(function () {
+              if (hit) return null;
+              return Cloud.get('dictation', ACCT.key(id)).then(function (rec) {
+                var d = rec && (rec.payload || rec);
+                if (d && Array.isArray(d.items)) hit = d;
+              }).catch(function () { });
+            });
+          }, Promise.resolve()).then(function () { return hit; });
+        }).catch(function () { return null; });
+      }
+
+      return Promise.all([local, remote]).then(function (r) {
+        var a = r[0], b = r[1];
+        var pick = (!a) ? b : (!b ? a : ((String(b.savedAt || '') > String(a.savedAt || '')) ? b : a));
+        return Backend._normDict(sid, pick);
+      });
+    },
+
+    /** 補齊欄位，讓 UI 不必到處防呆 */
+    _normDict: function (studentId, d) {
+      var items = ((d && d.items) || []).filter(function (it) {
+        return it && U.trim(it.word || '');
+      }).map(function (it) {
+        return {
+          word: U.trim(it.word),
+          note: it.note || '',
+          source: it.source || '',            /* 來自哪份試卷／文章 */
+          addedAt: it.addedAt || it.ts || '',
+          done: !!it.done                     /* 老師勾「已完成」 */
+        };
+      });
+      return {
+        studentId: studentId,
+        items: items,
+        savedAt: (d && d.savedAt) || '',
+        _pending: !!(d && d._pending)
+      };
+    },
+
+    /**
+     * 覆寫某位學生的默寫範圍（整包寫入）。
+     * 資料一致性靠「同一個鍵反覆覆寫」：加入與刪除都走這裡，
+     * 所以重新整理或換裝置讀到的都是最後一次寫入的結果。
+     */
+    saveDictation: function (studentId, items) {
+      var sid = String(studentId || '');
+      if (!sid) return Promise.reject(new Error('缺少學生 id'));
+      var doc = {
+        studentId: sid,
+        items: (items || []).filter(function (it) { return it && U.trim(it.word || ''); })
+          .map(function (it) {
+            return {
+              word: U.trim(it.word), note: it.note || '',
+              source: it.source || '', addedAt: it.addedAt || U.nowISO(), done: !!it.done
+            };
+          }),
+        savedAt: U.nowISO()
+      };
+      var jobs = [Store.kv.set(Backend._dictKey(sid), doc)];
+
+      if (Firebase.ok() || Hook.ok()) {
+        jobs.push(Backend.syncKeys(sid).then(function (ctx) {
+          var claim = ctx.claim || sid;
+          return Cloud.put(makeRec('dictation', claim, null, doc));
+        }));
+      }
+      return Promise.all(jobs).then(function () { return doc; })
+        .catch(function (e) {
+          /* 雲端失敗不能靜默：標記待補送，讓老師知道還沒同步出去 */
+          doc._pending = true;
+          Store.kv.set(Backend._dictKey(sid), doc);
+          Cloud.lastError = (e && e.message) || String(e);
+          return doc;
+        });
+    },
+
+    /** 批次加入（重複的詞不重複加；保留原有的 done 狀態） */
+    addToDictation: function (studentId, words) {
+      return Backend.getDictation(studentId).then(function (cur) {
+        var have = {};
+        cur.items.forEach(function (it) { have[it.word] = it; });
+        (words || []).forEach(function (w) {
+          var word = U.trim((w && w.word) || w || '');
+          if (!word || have[word]) return;
+          have[word] = {
+            word: word, note: (w && w.note) || '',
+            source: (w && w.source) || '', addedAt: U.nowISO(), done: false
+          };
+        });
+        return Backend.saveDictation(studentId, Object.keys(have).map(function (k) { return have[k]; }));
+      });
+    },
+
+    /** 批次移除（只動默寫範圍；回傳被移除的詞，讓呼叫端去更新生詞本的學會狀態） */
+    removeFromDictation: function (studentId, words) {
+      var kill = {};
+      (words || []).forEach(function (w) {
+        var word = U.trim((w && w.word) || w || '');
+        if (word) kill[word] = 1;
+      });
+      return Backend.getDictation(studentId).then(function (cur) {
+        var removed = cur.items.filter(function (it) { return kill[it.word]; });
+        var left = cur.items.filter(function (it) { return !kill[it.word]; });
+        return Backend.saveDictation(studentId, left).then(function (doc) {
+          doc.removed = removed;
+          return doc;
+        });
+      });
+    },
+
+    /**
+     * 把生詞標記為「已學會／未學會」。
+     * 生詞散在 submission 與 draft 的 vocab 陣列裡，所以要逐筆改寫；
+     * 找不到對應項時視為已是最新（不報錯）。
+     */
+    setVocabLearned: function (studentId, words, learned) {
+      var set = {};
+      (words || []).forEach(function (w) {
+        var word = U.trim((w && w.word) || w || '');
+        if (word) set[word] = 1;
+      });
+      if (!Object.keys(set).length) return Promise.resolve(0);
+
+      function patchList(list) {
+        return (list || []).reduce(function (acc, rec) {
+          if (!rec || !(rec.vocab || []).length) return acc;
+          var hit = false;
+          rec.vocab.forEach(function (v) {
+            if (v && set[U.trim(v.word || '')]) { v.learned = !!learned; hit = true; }
+          });
+          if (!hit) return acc;
+          /* 草稿走 saveDraft、作答走 saveSubmission，兩者都會寫本機＋雲端 */
+          var isDraft = rec.type === 'draft' || (!rec.score && rec.savedAt && !rec.submittedAt);
+          return acc.then(function () {
+            return isDraft ? Backend.saveDraft(rec) : Backend.saveSubmission(rec);
+          });
+        }, Promise.resolve(0));
+      }
+
+      return Promise.all([
+        Backend.mySubmissions(studentId).catch(function () { return []; }),
+        Backend.myDrafts(studentId).catch(function () { return []; })
+      ]).then(function (r) {
+        return patchList(r[0]).then(function () { return patchList(r[1]); });
+      }).then(function () { return true; });
+    },
+
+    _ghSubmissions: function (quizId) {      var base = (Settings.get().gh.path || 'data') + '/submissions';
       var p = quizId ? Promise.resolve([quizId]) : GitHub.list(base).catch(function () { return []; });
       return p.then(function (list) {
         return list.reduce(function (acc, d) {

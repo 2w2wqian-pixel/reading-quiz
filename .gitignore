@@ -4,7 +4,8 @@
 tools/_*.log
 tools/_d.html
 tools/_a.html
-tools/_g*.html
+# ⚠ 原本是 tools/_g*.html，會連 tools/_glogin.html（真正的測試頁）一起排除，
+#   導致全新 clone 之後跑不了瀏覽器測試。只排除產物，不要用寬鬆的萬用字元。
 tools/_dom*.html
 tools/_e2e_httpd.log
 tools/_e2e_dom.html
@@ -16,3 +17,5 @@ tools/_probe_out.txt
 tools/_trace.txt
 tools/_math.pdf
 tools/_shot*
+# 臨時煙霧測試腳本（跑完就丟，不是正式測試）
+tools/_smoke*.js

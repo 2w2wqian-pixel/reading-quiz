@@ -18,13 +18,26 @@ function check(label, ok, extra) {
 }
 
 /* ================= 可重置的假環境 ================= */
-let STATE = {};                       // 模擬 Settings（localStorage）
 let MEM = { quizzes: {}, submissions: {}, roster: {}, kv: {} };
 let NET = function () { return Promise.resolve({ ok: false, status: 404 }); };
 let HITS = [];
 
+/* ⚠ STATE 是「即時讀取」而不是快照。
+   以前這裡寫成 `STATE = RQ.settings.get()`，存下來的是重置當下的複本，
+   於是 loadConfig() 之後寫進 localStorage 的新值，斷言永遠看不到 ——
+   測試會一直紅，但產品其實是對的（反過來也可能讓錯的產品看起來是對的）。
+   用 getter 之後，斷言讀到的就是當下真正的設定。 */
+const STATE_PROXY = new Proxy({}, {
+  get: (t, k) => RQ.settings.get()[k],
+  has: (t, k) => k in RQ.settings.get(),
+  ownKeys: () => Reflect.ownKeys(RQ.settings.get()),
+  getOwnPropertyDescriptor: (t, k) => ({ configurable: true, enumerable: true, value: RQ.settings.get()[k] })
+});
+const STATE = STATE_PROXY;
+
 function resetEnv(settings, net) {
-  STATE = settings || {};
+  RQ.settings.reset();
+  RQ.settings.set(settings || {});
   Object.keys(MEM).forEach(k => { MEM[k] = {}; });
   HITS = [];
   NET = net || function () { return Promise.resolve({ ok: false, status: 404 }); };
@@ -41,20 +54,14 @@ const RQ = {
     uid: p => (p || 'id') + '_x',
     esc: s => String(s == null ? '' : s)
   },
-  settings: {
-    get: () => STATE,
-    who: () => STATE.session || null,
-    set: patch => {
-      Object.keys(patch).forEach(k => {
-        if (patch[k] && typeof patch[k] === 'object' && !Array.isArray(patch[k])) {
-          STATE[k] = Object.assign({}, STATE[k] || {}, patch[k]);
-        } else STATE[k] = patch[k];
-      });
-      return STATE;
-    }
-  },
+  /* 真的 store.js 會覆寫掉這個 stub（見下方），
+     這裡先留著是為了讓 RQ 物件在載入前就是完整的。 */
+  settings: null,
   store: {
-    ready: () => Promise.resolve(true),
+    /* 真的 Store.ready() 會 resolve 成 IDBDatabase 物件（diagnose() 就是看這個
+       來判斷 IndexedDB 是否可用）。這裡若只回 true，診斷會誤判成
+       「IndexedDB 不可用」—— 假環境要跟真的一樣，否則測的是假象。 */
+    ready: () => Promise.resolve({ objectStoreNames: { contains: () => true } }),
     all: s => Promise.resolve(Object.keys(MEM[s] || {}).map(k => MEM[s][k])),
     get: (s, id) => Promise.resolve((MEM[s] || {})[id] || null),
     put: (s, o) => { MEM[s][o.id] = o; return Promise.resolve(o); },
@@ -81,12 +88,76 @@ const RQ = {
     kv: {
       get: (k, d) => Promise.resolve(MEM.kv[k] ? MEM.kv[k].value : d),
       set: (k, v) => { MEM.kv[k] = { id: k, value: v }; return Promise.resolve(true); }
-    }
+    },
+    /* 作答與草稿的跨裝置鍵靠這兩個查名冊成員，缺了會讓測試的假環境失真 */
+    all: s2 => Promise.resolve(Object.keys(MEM[s2] || {}).map(k => MEM[s2][k])),
+    get: (s2, id) => Promise.resolve((MEM[s2] || {})[id] || null),
+    put: (s2, o) => { MEM[s2][o.id] = o; return Promise.resolve(o); }
   },
   crypto: {}
 };
 global.window = global;
 global.window.RQ = RQ;
+
+/* ★ 用真的 settings（store.js）而不是自己再寫一份：政策開關的預設值
+   只能有一個來源，測試若自備一份，就永遠測不出「兩份定義不一致」。
+   STATE 仍由 resetEnv 餵進來，只是改走真的 Settings.set()。 */
+const _ls = {};
+global.localStorage = {
+  getItem: k => (k in _ls ? _ls[k] : null),
+  setItem: (k, v) => { _ls[k] = String(v); },
+  removeItem: k => { delete _ls[k]; }
+};
+global.document = { createElement: () => ({ style: {}, setAttribute() { } }) };
+
+/* ★ store.js 載入時會把 RQ.store 換成**真的** Store（測試手寫的那份會被覆蓋），
+   而真的 Store 需要 window.indexedDB 才會走「正常」路徑，否則降級成記憶體暫存、
+   診斷報告就會回「此瀏覽器不支援 IndexedDB」——那是 Node 的事實，不是產品的問題。
+   這裡補一個最小可用的 in-memory IndexedDB，讓測試跑在跟瀏覽器同一條路徑上。 */
+(function installFakeIDB() {
+  const DBS = {};
+  function makeReq(result) {
+    const req = { result, onsuccess: null, onerror: null };
+    setTimeout(() => { if (req.onsuccess) req.onsuccess({ target: req }); }, 0);
+    return req;
+  }
+  function makeStore(name, data) {
+    return {
+      _data: data,
+      createIndex() { return {}; },
+      get(id) { return makeReq(this._data[id]); },
+      getAll() { return makeReq(Object.keys(this._data).map(k => this._data[k])); },
+      put(obj) { this._data[obj.id] = obj; return makeReq(obj.id); },
+      delete(id) { delete this._data[id]; return makeReq(true); }
+    };
+  }
+  global.indexedDB = {
+    open(name, ver) {
+      const db = {
+        objectStoreNames: { contains: n => !!(DBS[name] && DBS[name][n]) },
+        createObjectStore(n) { DBS[name][n] = DBS[name][n] || {}; return makeStore(n, DBS[name][n]); },
+        transaction(n) { return { objectStore: () => makeStore(n, (DBS[name] = DBS[name] || {})[n] = DBS[name][n] || {}) }; }
+      };
+      const req = { result: db, onsuccess: null, onerror: null, onupgradeneeded: null, onblocked: null };
+      DBS[name] = DBS[name] || {};
+      setTimeout(() => {
+        const fresh = !db._init;
+        if (!db._init) { db._init = true; if (req.onupgradeneeded) req.onupgradeneeded({ target: req }); }
+        if (req.onsuccess) req.onsuccess({ target: req });
+      }, 0);
+      return req;
+    },
+    deleteDatabase() { return makeReq(true); }
+  };
+})();
+
+vm.runInThisContext(fs.readFileSync(path.join(ROOT, 'assets/js/core/store.js'), 'utf8'));
+RQ.settings = window.RQ.settings;
+RQ.settings.POLICY_KEYS = window.RQ.settings.POLICY_KEYS;
+/* 真的 Store 需要被「重新指向」本機的假資料容器：store.js 已把 RQ.store 換掉，
+   所以 MEM 相關的斷言要改用 Store 的實際內容（見下方 byStore 輔助）。 */
+RQ.store = window.RQ.store;
+
 global.fetch = (u, i) => { HITS.push(((i && i.method) || 'GET') + ' ' + String(u).split('?')[0]); return Promise.resolve(NET(String(u), i || {})); };
 
 vm.runInThisContext(fs.readFileSync(path.join(ROOT, 'assets/js/core/backend.js'), 'utf8'));
@@ -161,9 +232,22 @@ function netFirebaseBroken(hookRows) {
 
   /* ============ ③ 公開政策：學生裝置生效、老師裝置不覆蓋 ============ */
   console.log('\n③ 公開政策（assignOnly 等）');
-  resetEnv({ assigning: 1, assignOnly: true, gh: {}, hook: {}, fb: {} }, netFirebaseOk());
+  /* 學生裝置：沒動過任何政策開關 → 以已發佈的值為準。
+     注意「assignOnly: true」不可以出現在這裡 —— 那等於這台裝置自己表態過，
+     依規則就該保留本機值，測試反而測不到「公開政策有沒有生效」。 */
+  resetEnv({ gh: {}, hook: {}, fb: {} }, netFirebaseOk());
+  check('未動過政策前，本機沒有表態', RQ.settings.hasPolicy('assignOnly') === false);
   await B.loadConfig();
   check('學生裝置套用 repo 的政策（assignOnly → false）', STATE.assignOnly === false, String(STATE.assignOnly));
+  check('公開政策涵蓋所有開關，不只是 assignOnly',
+    STATE.allowRetake === false && STATE.enableHighlight === true && STATE.showAnswerAfterSubmit === true,
+    JSON.stringify({ r: STATE.allowRetake, h: STATE.enableHighlight, s: STATE.showAnswerAfterSubmit }));
+
+  /* 學生裝置自己開過某個開關（例如在設定頁動過）→ 保留本機，不被公開政策蓋掉 */
+  resetEnv({ policy: { allowRetake: true }, gh: {}, hook: {}, fb: {} }, netFirebaseOk());
+  await B.loadConfig();
+  check('本機明確改過的開關不被公開政策覆蓋', STATE.allowRetake === true, String(STATE.allowRetake));
+  check('本機沒改過的其餘開關仍套用公開政策', STATE.assignOnly === false, String(STATE.assignOnly));
 
   resetEnv({ assignOnly: true, gh: { owner: 'o', repo: 'r', token: 'tok' }, hook: {}, fb: {} }, netFirebaseOk());
   await B.loadConfig();
@@ -241,16 +325,28 @@ function netFirebaseBroken(hookRows) {
   /* ============ ⑦ 提交時雲端不通 → 標記待補送 ============ */
   console.log('\n⑦ 提交與補送');
   resetEnv({ fb: Object.assign({}, FB), hook: {}, gh: {} }, netFirebaseBroken());
+  MEM.roster['s1'] = { id: 's1', username: 'waiwai', name: '小明' };
   B.Cloud.lastWritten = '';
   const sub = await B.saveSubmission({ quizId: 'q1', studentId: 's1', studentName: '小明', answers: {}, id: 'sub1' });
-  check('雲端不通時提交仍完成（本機保存）', !!sub && sub.id === 'sub1');
+  /* 提交完成後 id 會被改寫成「帳號型同步鍵」——這是跨裝置同一份作答的關鍵，
+     所以這裡斷言的是新鍵，而不再是呼叫端隨便帶進來的 'sub1'。 */
+  check('雲端不通時提交仍完成（本機保存）', !!sub && !!sub.id, JSON.stringify(sub && sub.id));
+  check('提交改用帳號型同步鍵（跨裝置同一份）', sub.id === 'sub::q1::s1', String(sub.id));
+  check('本機舊鍵已清除，不會留下重複紀錄', !MEM.submissions['sub1'], JSON.stringify(Object.keys(MEM.submissions)));
   check('標記為待補送（_pending）', sub._pending === true, JSON.stringify(sub._pending));
   check('保留失敗原因', /CONFIGURATION_NOT_FOUND/.test(String(sub._syncError || '')), String(sub._syncError));
 
   resetEnv({ fb: Object.assign({}, FB), hook: { postUrl: REPO_CONFIG.hook.postUrl }, gh: {} },
     netFirebaseOk());
+  MEM.roster['s1'] = { id: 's1', username: 'waiwai', name: '小明' };
   const sub2 = await B.saveSubmission({ quizId: 'q2', studentId: 's1', answers: {}, id: 'sub2' });
   check('雲端通時提交標記為已同步', !sub2._pending && sub2._synced === 'firebase', JSON.stringify({ p: sub2._pending, s: sub2._synced }));
+
+  /* 同一份作答換一台裝置再交一次 → 必須落在同一個雲端欄位，而不是變成第二筆 */
+  const keyA = (await B.syncKeys('s1', 'q2')).keys[0];
+  const keyB = (await B.syncKeys('s1', 'q2')).keys[0];
+  check('同一人同一卷的同步鍵可重現（換裝置也一樣）', keyA === keyB && !!keyA, keyA);
+  check('同步鍵不含裝置資訊', !/[0-9a-f]{8}-[0-9a-f]{4}/.test(String(keyA)), String(keyA));
 
   console.log('\nSUMMARY: ' + pass + ' pass / ' + fail + ' fail');
   process.exit(fail ? 1 : 0);

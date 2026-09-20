@@ -53,12 +53,10 @@
     return tags.join('・');
   }
 
-  /* 某份作業是否指派給某學生 */
-  function assignedTo(meta, studentId) {
-    var a = meta && meta.assignment;
-    if (!a) return false;
-    if (a.all) return true;
-    return (a.ids || []).indexOf(studentId) >= 0;
+  /* 某份作業是否指派給某學生（規則由 Backend.isAssigned 統一提供，
+     這樣老師端的追蹤清單與學生端看到的一致：全班／指定個人／依班別） */
+  function assignedTo(meta, student) {
+    return Backend.isAssigned(meta, student);
   }
 
   /* 讀圖檔 → dataURL（順便縮圖，避免儲存過大） */
@@ -106,8 +104,9 @@
         return subs.filter(function (x) { return String(x.studentId) === String(sid); })
           .sort(function (x, y) { return String(y.submittedAt || '').localeCompare(String(x.submittedAt || '')); })[0] || null;
       }
-      /* 一位學生可能分段提交多次 → 取最新一次代表進度 */
-      var targets = a.all ? roster : roster.filter(function (s) { return (a.ids || []).indexOf(s.id) >= 0; });
+      /* 一位學生可能分段提交多次 → 取最新一次代表進度。
+         判定走 Backend.isAssigned：全班／指定個人／依班別都涵蓋。 */
+      var targets = roster.filter(function (s) { return assignedTo(quiz, s); });
 
       var nDone = 0, nGraded = 0;
       var rowsHtml = targets.map(function (s) {
@@ -194,23 +193,67 @@
       var body = U.el('div');
       body.appendChild(U.el('label.opt', {}, [allChk, U.el('span', { text: ' 指派給全班' })]));
       var stud = U.el('div.mt2', {
-        style: { maxHeight: '220px', overflow: 'auto', border: '1.5px solid var(--line)', borderRadius: 'var(--r-sm)', padding: '8px' }
+        style: { maxHeight: '240px', overflow: 'auto', border: '1.5px solid var(--line)', borderRadius: 'var(--r-sm)', padding: '8px' }
       });
-      var rows = [];
+      var rows = [];          /* 每位學生：{id, chk, cls} */
+      var classBoxes = [];    /* 每個班別：{name, box, members} */
+
+      function studentLabel(m, s) {
+        return U.el('label.opt', { style: { marginTop: '4px', display: 'block' } }, [
+          m.chk, U.el('span', { text: ' ' + (s.name || s.username) + (s.className ? '（' + s.className + '）' : '') })
+        ]);
+      }
+      /* 班別勾選框＝「批次勾選」的便利工具；儲存時才判斷某班是否「整班都勾了」，
+         整班都勾 → 記進 assignment.classes，之後該班新增的學生也一併涵蓋。 */
+      function syncClassBoxes() {
+        classBoxes.forEach(function (c) {
+          var n = c.members.filter(function (m) { return m.chk.checked; }).length;
+          c.box.checked = n > 0 && n === c.members.length;
+          c.box.indeterminate = n > 0 && n < c.members.length;
+        });
+      }
+
       if (!list.length) {
         stud.appendChild(U.el('div.tiny.muted', { text: '名冊尚無學生。學生可自行註冊，或到「④ 學生名冊」新增。' }));
       } else {
+        var byClass = {}, noClass = [];
         list.forEach(function (s) {
           var chk = U.el('input', { type: 'checkbox' });
           chk.checked = (a.ids || []).indexOf(s.id) >= 0;
-          rows.push({ id: s.id, chk: chk });
-          stud.appendChild(U.el('label.opt', { style: { marginTop: '4px' } }, [
-            chk, U.el('span', { text: ' ' + (s.name || s.username) + (s.className ? '（' + s.className + '）' : '') })
-          ]));
+          var m = { id: s.id, chk: chk, cls: U.trim(s.className || '') };
+          rows.push(m);
+          if (m.cls) (byClass[m.cls] = byClass[m.cls] || []).push(m);
+          else noClass.push(m);
+          chk.addEventListener('change', syncClassBoxes);
+          m._label = function () { return studentLabel(m, s); };
         });
+
+        Object.keys(byClass).sort().forEach(function (cn) {
+          var members = byClass[cn];
+          var box = U.el('input', { type: 'checkbox' });
+          box.addEventListener('change', function () {
+            members.forEach(function (m) { m.chk.checked = box.checked; });
+            syncClassBoxes();
+          });
+          classBoxes.push({ name: cn, box: box, members: members });
+          stud.appendChild(U.el('label.opt', { style: { marginTop: '4px', display: 'block' } }, [
+            box, U.el('span', { text: ' 全選「' + cn + '」全班（' + members.length + ' 人）' })
+          ]));
+          members.forEach(function (m) { stud.appendChild(m._label()); });
+        });
+        if (noClass.length) {
+          stud.appendChild(U.el('div.tiny.muted', { style: { marginTop: '8px' } },
+            [U.el('b', { text: '未分班' })]));
+          noClass.forEach(function (m) { stud.appendChild(m._label()); });
+        }
       }
-      body.appendChild(U.el('div.tiny.muted.mt2', { text: '選擇學生（可多選）' }));
+      body.appendChild(U.el('div.tiny.muted.mt2', { text: '選擇學生（可多選；也能整個班別一起勾）' }));
       body.appendChild(stud);
+      if (!classBoxes.length && list.length) {
+        body.appendChild(U.el('div.tiny.muted.mt1', {
+          text: '提示：學生還沒有班別，「④ 學生名冊」可以逐一設定，之後就能用班別指派。'
+        }));
+      }
       body.appendChild(U.el('div.mt2', {}, [U.el('label.tiny.muted', { text: '截止日期（選填）' }), dueInp]));
       body.appendChild(U.el('div.mt1', {}, [U.el('label.tiny.muted', { text: '備註（選填）' }), noteInp]));
 
@@ -230,9 +273,13 @@
           {
             label: '儲存', kind: 'primary', onClick: function () {
               var ids = rows.filter(function (r) { return r.chk.checked; }).map(function (r) { return r.id; });
-              if (!allChk.checked && !ids.length) { U.toast('請選「全班」或至少一位學生', 'bad'); return false; }
+              /* 整班都勾了才記進 classes —— 這樣該班「之後新增的學生」也會被涵蓋 */
+              var classes = classBoxes.filter(function (c) {
+                return c.members.length && c.members.every(function (m) { return m.chk.checked; });
+              }).map(function (c) { return c.name; });
+              if (!allChk.checked && !ids.length) { U.toast('請選「全班」、一個班別，或至少一位學生', 'bad'); return false; }
               quiz.assignment = {
-                all: allChk.checked, ids: ids,
+                all: allChk.checked, ids: ids, classes: classes,
                 due: dueInp.value || '', note: U.trim(noteInp.value),
                 assignedAt: U.nowISO()
               };
@@ -972,10 +1019,10 @@
         ]));
         return;
       }
-      /* 指派政策開關：預設「學生只看得到老師指派的試卷」 */
-      var assignOnlyOn = Settings.get().assignOnly !== false;
+      /* 指派政策開關：預設「學生只看得到老師指派的試卷」。
+         值一律走 Settings.policy()（全站單一來源），不要自己算預設值。 */
       var policyChk = U.el('input', { type: 'checkbox' });
-      policyChk.checked = assignOnlyOn;
+      policyChk.checked = Settings.policy('assignOnly') !== false;
       var policyHint = U.el('span.tiny.muted', {});
       function drawPolicyHint() {
         policyHint.textContent = policyChk.checked
@@ -984,9 +1031,13 @@
       }
       drawPolicyHint();
       policyChk.addEventListener('change', function () {
-        Settings.set({ assignOnly: policyChk.checked });
+        Settings.setPolicy({ assignOnly: policyChk.checked });
         drawPolicyHint();
         U.toast(policyChk.checked ? '已改為：指派後學生才看得到' : '已改為：學生看得到所有已發佈試卷', 'ok');
+        /* 這個開關只存在各台裝置的 localStorage，不同步會讓學生端行為不一致 */
+        Backend.publishConfig().then(function () {
+          U.toast('已同步到所有裝置', 'ok', 2600);
+        }).catch(function () { });
       });
       box.appendChild(U.el('div.card.tinted.mb2', {}, [
         U.el('label.opt', {}, [policyChk, U.el('b', { text: ' 指派後學生才看得到試卷', style: { marginLeft: '6px' } })]),
@@ -1512,6 +1563,7 @@
     var un = U.el('input.input', { placeholder: '登入帳號（英文/數字）' });
     var nm = U.el('input.input', { placeholder: '姓名' });
     var cl = U.el('input.input', { placeholder: '班別（選填）' });
+    var mail = U.el('input.input', { type: 'email', placeholder: '學生的 Google 電子郵件（選填）' });
     var pw = U.el('input.input', { placeholder: '密碼' });
     addCard.appendChild(U.el('div.inline-fields', {}, [
       U.el('div', {}, [U.el('label.tiny.muted', { text: '帳號' }), un]),
@@ -1519,21 +1571,36 @@
       U.el('div', {}, [U.el('label.tiny.muted', { text: '班別' }), cl]),
       U.el('div', {}, [U.el('label.tiny.muted', { text: '密碼' }), pw])
     ]));
+    addCard.appendChild(U.el('div.mt1', {}, [
+      U.el('label.tiny.muted', { text: 'Google 電子郵件（選填，填了學生就能用 Google 一鍵登入）' }),
+      mail
+    ]));
+    addCard.appendChild(U.el('div.tiny.faint', {
+      html: '同一個電子郵件只會對應到一位學生。填了之後，學生按「使用 Google 登入」'
+        + '就會自動認出他，不必再做綁定。<b>這個欄位不會寫進公開的名冊檔</b>。'
+    }));
     addCard.appendChild(U.el('div.mt2.row', {}, [
       U.el('button.btn.primary.sm', {
         text: '新增', onclick: function () {
           var u = U.trim(un.value), p = U.trim(pw.value);
+          var m = U.trim(mail.value).toLowerCase();
           if (!u || !p) { U.toast('帳號與密碼必填', 'bad'); return; }
+          if (m && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(m)) { U.toast('電子郵件格式看起來不對', 'bad'); return; }
           Backend.getRoster().then(function (list) {
             if (list.filter(function (x) { return x.username === u; }).length) { U.toast('此帳號已存在', 'bad'); return; }
+            if (m && list.filter(function (x) { return String(x.email || '').toLowerCase() === m; }).length) {
+              U.toast('這個電子郵件已經登記給另一位學生了', 'bad', 4200); return;
+            }
             return RQ.crypto.hashPassword(p).then(function (h) {
-              return Backend.saveStudent({
+              var stu = {
                 id: U.uid('stu'), username: u, name: U.trim(nm.value) || u,
                 className: U.trim(cl.value), pass: h, createdAt: U.nowISO()
-              });
+              };
+              if (m) stu.email = m;
+              return Backend.saveStudent(stu);
             });
           }).then(function () {
-            un.value = nm.value = cl.value = pw.value = '';
+            un.value = nm.value = cl.value = pw.value = mail.value = '';
             U.toast('已新增，並已同步到雲端與 repo（學生任何裝置都能登入）', 'ok', 4200); draw();
           }).catch(function (e) { U.toast('新增失敗：' + ((e && e.message) || e), 'bad', 4200); });
         }
@@ -1583,41 +1650,135 @@
           listBox.appendChild(U.el('div.tiny.muted', { text: '尚未建立任何學生帳號。' }));
           return;
         }
+        var nGoogle = list.filter(function (s) { return !!s.googleUid; }).length;
+        var nMail = list.filter(function (s) { return !!s.email; }).length;
+        listBox.appendChild(U.el('div.tiny.muted', {
+          text: 'Google 已綁定 ' + nGoogle + ' 人／名冊登記 email ' + nMail + ' 人／共 ' + list.length + ' 人'
+            + '　（email 與 Google 帳號相同的學生，按 Google 登入會直接進站）'
+        }));
+
         var tbl = U.el('table.tbl');
-        tbl.innerHTML = '<thead><tr><th>帳號</th><th>姓名</th><th>班別</th><th>建立時間</th><th>操作</th></tr></thead>';
+        tbl.innerHTML = '<thead><tr><th>帳號</th><th>姓名</th><th>班別</th><th>Google 電子郵件</th>'
+          + '<th>登入方式</th><th>建立時間</th><th>操作</th></tr></thead>';
         var tb = U.el('tbody');
         list.forEach(function (s) {
           var tr = U.el('tr');
           tr.appendChild(U.el('td', { text: s.username }));
           tr.appendChild(U.el('td', { text: s.name || '' }));
           tr.appendChild(U.el('td', { text: s.className || '—' }));
+
+          /* email：老師登記的與 Google 回報的（不會寫進公開名冊檔） */
+          var mTd = U.el('td');
+          if (s.email) {
+            mTd.appendChild(U.el('span', { text: s.email }));
+            if (s.googleName && s.googleName !== s.name) {
+              mTd.appendChild(U.el('div.tiny.faint', { text: 'Google 名稱：' + s.googleName }));
+            }
+          } else {
+            mTd.appendChild(U.el('span.tiny.faint', { text: '未填' }));
+          }
+          tr.appendChild(mTd);
+
+          /* 這一欄就是老師「辨識 Google 學生」的地方 */
+          var gTd = U.el('td');
+          if (s.googleUid) {
+            gTd.appendChild(U.el('span.tag.mint', { text: '已連結 Google' }));
+          } else if (s.email) {
+            gTd.appendChild(U.el('span.tag.sun', { text: '等學生首次登入' }));
+          } else {
+            gTd.appendChild(U.el('span.tag.gray', { text: '僅帳號密碼' }));
+          }
+          tr.appendChild(gTd);
+
           tr.appendChild(U.el('td', { text: U.fmtDate(s.createdAt) }));
-          tr.appendChild(U.el('td', {}, [
-            U.el('button.btn.xs', {
-              text: '重設密碼', onclick: function () {
-                var inp = U.el('input.input', { placeholder: '新密碼' });
-                U.modal({
-                  title: '重設 ' + (s.name || s.username) + ' 的密碼', body: inp,
-                  actions: [{ label: '取消' }, {
-                    label: '設定', kind: 'primary', onClick: function () {
-                      var v = U.trim(inp.value);
-                      if (!v) return false;
-                      return RQ.crypto.hashPassword(v).then(function (h) {
-                        s.pass = h; return Backend.saveStudent(s);
-                      }).then(function () { U.toast('已重設', 'ok'); });
-                    }
-                  }]
+
+          var ops = [];
+          /* 最重要的一顆：幫學生預先填好 Google 電子郵件（＝同一個 Email 視為同一位使用者） */
+          ops.push(U.el('button.btn.xs', {
+            text: '設定 email', title: '填好之後，學生用這個 Google 帳號登入就會直接進站',
+            onclick: function () {
+              var inp = U.el('input.input', {
+                type: 'email', value: s.email || '',
+                placeholder: '學生的 Google 電子郵件'
+              });
+              var box = U.el('div');
+              box.appendChild(inp);
+              box.appendChild(U.el('div.tiny.faint.mt1', {
+                text: '同一個 email 只能給一位學生。留空＝取消登記（已綁定的帳號不受影響）。'
+              }));
+              U.modal({
+                title: '設定 ' + (s.name || s.username) + ' 的 Google 電子郵件',
+                body: box,
+                actions: [{ label: '取消' }, {
+                  label: '儲存', kind: 'primary', onClick: function () {
+                    var v = U.trim(inp.value).toLowerCase();
+                    if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) { U.toast('電子郵件格式看起來不對', 'bad'); return false; }
+                    return Backend.getRoster().then(function (rows) {
+                      var clash = rows.filter(function (x) {
+                        return x.id !== s.id && String(x.email || '').toLowerCase() === v;
+                      })[0];
+                      if (v && clash) throw new Error('這個電子郵件已登記給「' + (clash.name || clash.username) + '」了');
+                      s.email = v;
+                      return Backend.saveStudent(s);
+                    }).then(function () { U.toast('已更新', 'ok'); draw(); })
+                      .catch(function (e) { U.toast('更新失敗：' + ((e && e.message) || e), 'bad', 5000); });
+                  }
+                }]
+              });
+            }
+          }));
+          ops.push(U.el('button.btn.xs', {
+            text: '班別', title: '設定班別（指派作業時可整班勾選）', onclick: function () {
+              var inp = U.el('input.input', { placeholder: '例如 2A（留空＝不分班）', value: s.className || '' });
+              U.modal({
+                title: '設定 ' + (s.name || s.username) + ' 的班別', body: inp,
+                actions: [{ label: '取消' }, {
+                  label: '儲存', kind: 'primary', onClick: function () {
+                    return Backend.setStudentClass(s.id, inp.value).then(function () {
+                      U.toast('已更新班別', 'ok'); draw();
+                    }).catch(function (e) { U.toast('更新失敗：' + ((e && e.message) || e), 'bad'); });
+                  }
+                }]
+              });
+            }
+          }));
+          ops.push(U.el('button.btn.xs', {
+            text: '重設密碼', style: { marginLeft: '4px' }, onclick: function () {
+              var inp = U.el('input.input', { placeholder: '新密碼' });
+              U.modal({
+                title: '重設 ' + (s.name || s.username) + ' 的密碼', body: inp,
+                actions: [{ label: '取消' }, {
+                  label: '設定', kind: 'primary', onClick: function () {
+                    var v = U.trim(inp.value);
+                    if (!v) return false;
+                    return RQ.crypto.hashPassword(v).then(function (h) {
+                      s.pass = h; return Backend.saveStudent(s);
+                    }).then(function () { U.toast('已重設', 'ok'); });
+                  }
+                }]
+              });
+            }
+          }));
+          if (s.googleUid) {
+            ops.push(U.el('button.btn.xs', {
+              text: '解除綁定', style: { marginLeft: '4px' }, onclick: function () {
+                U.confirm('解除「' + (s.name || s.username) + '」的 Google 綁定？'
+                  + '之後用 Google 登入會需要重新綁定（作答紀錄不受影響）。', function () {
+                  Backend.unbindGoogle(s.id).then(function () {
+                    U.toast('已解除綁定', 'ok'); draw();
+                  }).catch(function (e) { U.toast('解除失敗：' + ((e && e.message) || e), 'bad', 5000); });
                 });
               }
-            }),
-            U.el('button.btn.xs.danger', {
-              text: '刪除', style: { marginLeft: '4px' }, onclick: function () {
-                U.confirm('刪除 ' + (s.name || s.username) + '？', function () {
-                  Store.roster.del(s.id).then(draw);
-                });
-              }
-            })
-          ]));
+            }));
+          }
+          ops.push(U.el('button.btn.xs.danger', {
+            text: '刪除', style: { marginLeft: '4px' }, onclick: function () {
+              U.confirm('刪除 ' + (s.name || s.username) + '？', function () {
+                Store.roster.del(s.id).then(draw);
+              });
+            }
+          }));
+          tr.appendChild(U.el('td', {}, ops));
           tb.appendChild(tr);
         });
         tbl.appendChild(tb);
@@ -1644,13 +1805,33 @@
     var fbUrl = U.el('input.input', { value: (s.fb || {}).dbUrl || '', placeholder: 'https://你的專案.firebaseio.com' });
     var fbKey = U.el('input.input', { value: (s.fb || {}).apiKey || '', placeholder: 'Web API Key（AIza…）' });
     var fbCode = U.el('input.input', { value: (s.fb || {}).classCode || '', placeholder: '例如：2A-CHI' });
+    var fbAuth = U.el('input.input', {
+      value: (s.fb || {}).authDomain || '',
+      placeholder: '例如：你的專案.firebaseapp.com'
+    });
+    /* 把三個欄位的值一次寫進設定（避免只寫了某幾個、其他被清掉） */
+    function readFb() {
+      return {
+        enabled: true, dbUrl: U.trim(fbUrl.value), apiKey: U.trim(fbKey.value),
+        classCode: U.trim(fbCode.value), authDomain: U.trim(fbAuth.value)
+      };
+    }
     fb.appendChild(U.el('div', {}, [U.el('label.tiny.muted', { text: 'Firebase Realtime Database URL' }), fbUrl]));
     fb.appendChild(U.el('div.mt1', {}, [U.el('label.tiny.muted', { text: 'Firebase Web API Key' }), fbKey]));
     fb.appendChild(U.el('div.mt1', {}, [U.el('label.tiny.muted', { text: '班級代碼（所有資料放在這個命名空間下）' }), fbCode]));
+    fb.appendChild(U.el('div.mt1', {}, [
+      U.el('label.tiny.muted', { text: 'Google 授權網域 authDomain（要讓學生用 Google 帳號登入才需填）' }),
+      fbAuth
+    ]));
+    fb.appendChild(U.el('div.tiny.faint.mt1', {
+      html: 'authDomain 在 Firebase Console →「專案設定 → 一般 → 你的應用程式」裡，' +
+        '長得像 <code>你的專案.firebaseapp.com</code>。留空不影響既有的同步功能，' +
+        '只是學生登入頁不會出現「使用 Google 登入」按鈕。'
+    }));
     fb.appendChild(U.el('div.mt2.row', {}, [
       U.el('button.btn.primary.sm', {
         text: '啟用 Firebase 並測試', onclick: function () {
-          Settings.set({ fb: { enabled: true, dbUrl: U.trim(fbUrl.value), apiKey: U.trim(fbKey.value), classCode: U.trim(fbCode.value) } });
+          Settings.set({ fb: readFb() });
           Backend.Cloud.test().then(function (r) {
             U.toast('雲端連線成功（' + r.driver + '）', 'ok', 3600);
             /* 順手把公開設定寫進 repo：學生的 iPad、其他電腦一開網站就自動連上，
@@ -1671,7 +1852,7 @@
       }),
       U.el('button.btn.sm.lav', {
         text: '發佈設定給所有裝置', onclick: function () {
-          Settings.set({ fb: { enabled: true, dbUrl: U.trim(fbUrl.value), apiKey: U.trim(fbKey.value), classCode: U.trim(fbCode.value) } });
+          Settings.set({ fb: readFb() });
           Backend.publishConfig().then(function () {
             U.toast('已寫入 repo 的 data/config.json：學生用 iPad／其他電腦開網站會自動連上雲端', 'ok', 5000);
           }).catch(function (e) { U.toast('發佈失敗：' + e.message, 'bad', 4500); });
@@ -1685,13 +1866,20 @@
         '真正的防護是資料庫規則：' +
         '<code>{"rules":{"rq":{".read":"auth != null",".write":"auth != null"}}}</code>（只允許匿名登入者）。'
     }));
+    fb.appendChild(U.el('div.tiny.faint.mt2', {
+      html: '<b>要讓學生用 Google 帳號登入，還要在 Firebase Console 做兩件事：</b><br>' +
+        '① Authentication → Sign-in method → 啟用 <b>Google</b>（並指定專案支援電子郵件）<br>' +
+        '② Authentication → Settings → <b>已授權網域</b> → 加入本站網址（例如 ' +
+        '<code>2w2wqian-pixel.github.io</code>）<br>' +
+        '少了第 ② 項，學生按下 Google 登入會直接被擋掉（unauthorized-domain）。'
+    }));
     view.appendChild(fb);
 
     /* 註冊設定 */
     var reg = U.el('div.card');
     reg.appendChild(U.el('h3', { text: '② 學生註冊方式' }));
     var cbSelf = U.el('input', { type: 'checkbox' });
-    cbSelf.checked = !!s.allowSelfRegister;
+    cbSelf.checked = Settings.policy('allowSelfRegister') === true;
     var codeInp = U.el('input.input', { value: s.classCode || '', placeholder: '例如 2A-CHI', style: { maxWidth: '220px' } });
     reg.appendChild(U.el('label.check', { style: { display: 'flex', marginBottom: '8px' } }, [
       cbSelf, U.el('span', { text: '開放學生自助註冊（學生填姓名＋自選帳號＋密碼＋班級代碼）' })
@@ -1700,11 +1888,22 @@
       U.el('label.tiny.muted', { text: '班級代碼：' }), codeInp,
       U.el('span.tiny.faint', { text: '（告訴學生這組代碼；Apps Script 端也要填一樣的 CLASS_CODE）' })
     ]));
+    reg.appendChild(U.el('div.tiny.faint.mt1', {
+      html: '<b>注意：這裡的「班級代碼」和上面①的「班級代碼」是兩件事</b>——<br>' +
+        '① 的是雲端資料的<b>命名空間</b>（所有裝置必須一致，改了讀不到舊資料）；<br>' +
+        '這裡的是<b>自助註冊的門檻</b>（告訴學生就能註冊）。兩者刻意分開存放。'
+    }));
     reg.appendChild(U.el('div.mt2', {}, [
       U.el('button.btn.primary.sm', {
         text: '儲存註冊設定', onclick: function () {
-          Settings.set({ allowSelfRegister: cbSelf.checked, classCode: U.trim(codeInp.value) });
-          U.toast('已儲存', 'ok');
+          Settings.setPolicy({ allowSelfRegister: cbSelf.checked });
+          Settings.set({ classCode: U.trim(codeInp.value) });
+          /* 這兩個值必須發佈，否則學生裝置拿不到「可以自助註冊」與門檻代碼 */
+          Backend.publishConfig().then(function () {
+            U.toast('已儲存並發佈給所有裝置', 'ok', 3600);
+          }).catch(function () {
+            U.toast('已儲存在這台裝置（尚未設定 GitHub，無法發佈）', 'bad', 4500);
+          });
         }
       })
     ]));
@@ -1900,13 +2099,19 @@
       U.el('label.check', {}, [
         (function () {
           var c = U.el('input', { type: 'checkbox' });
-          c.checked = !!Settings.get().allowRetake;
-          c.addEventListener('change', function () { Settings.set({ allowRetake: c.checked }); });
+          c.checked = Settings.policy('allowRetake') === true;
+          c.addEventListener('change', function () {
+            Settings.setPolicy({ allowRetake: c.checked });
+            Backend.publishConfig().catch(function () { });
+          });
           return c;
         })(),
         U.el('span', { text: '允許學生重複作答同一份試卷' })
       ])
     ]));
+    sync.appendChild(U.el('div.tiny.faint.mt1', {
+      text: '上列的開關與「設定」頁是同一組值（單一來源），改一處兩邊都會變，並自動同步給所有裝置。'
+    }));
     view.appendChild(sync);
   };
 

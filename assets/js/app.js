@@ -61,7 +61,11 @@
     var who = Settings.who();
     whoEl.innerHTML = '';
     if (!who) {
-      whoEl.appendChild(U.el('span.chip', { text: '未登入' }));
+      /* 未登入時，導覽列本身就提供登入入口（手機版導覽列可橫向滑動，
+         所以這裡也要能點到，不必先捲到頁面中間去找表單）。 */
+      appendGoogleEntry(whoEl);
+      whoEl.appendChild(U.el('a.btn.xs', { href: '#/student', text: '學生登入' }));
+      whoEl.appendChild(U.el('a.btn.xs.ghost', { href: '#/teacher', text: '老師登入' }));
       return;
     }
     whoEl.appendChild(U.el('span.chip', {
@@ -70,11 +74,45 @@
     whoEl.appendChild(U.el('button.btn.xs.ghost', {
       text: '登出', onclick: function () {
         Settings.logout();
+        /* 一併登出 Google：共用平板換人時，否則下一個人按 Google 登入會直接
+           沿用上一個人的帳號。失敗不影響本站的登出。 */
+        if (RQ.googleAuth) RQ.googleAuth.signOut().catch(function () { });
         U.toast('已登出');
         location.hash = '#/';
         renderWho();
+        route();          /* hash 沒變就不會觸發 hashchange，這裡主動重畫一次 */
       }
     }));
+  }
+
+  /**
+   * 導覽列的「使用 Google 登入」。與學生登入頁是**同一條流程**
+   * （RQ.student.loginPage 內的入口），所以不會出現兩套行為不一致。
+   * 沒設定 authDomain 時整顆按鈕不出現，導覽列不會多一個按不動的東西。
+   */
+  function appendGoogleEntry(host) {
+    var G = RQ.googleAuth;
+    if (!G || !G.available()) return;
+    var b = U.el('button.btn.xs', {
+      text: '使用 Google 登入', title: '使用 Google 帳號登入（學生）',
+      style: { display: 'flex', alignItems: 'center', gap: '6px' },
+      onclick: function () {
+        b.disabled = true;
+        U.toast('正在開啟 Google 登入…', null, 2000);
+        /* 記住使用者原本在哪一頁，登入完導回原頁 */
+        var back = location.hash && !/^#\/?$/.test(location.hash) &&
+          !/^#\/student(\/login)?$/.test(location.hash) ? location.hash : '';
+        if (back) { try { sessionStorage.setItem('rq_login_return', back); } catch (e) { } }
+        G.signIn().then(function (p) {
+          if (p && p.redirect) return;
+          return RQ.student.loginGoogle(p);
+        }).catch(function (e) {
+          b.disabled = false;
+          U.toast(G.errorText(e), 'bad', 6500);
+        });
+      }
+    });
+    host.appendChild(b);
   }
 
   /* ============================================================
@@ -131,9 +169,15 @@
   function settings() {
     view.innerHTML = '';
     var s = Settings.get();
+    var pol = Settings.policy();
 
     var card = U.el('div.card');
     card.appendChild(U.el('h2', { text: '設定' }));
+    card.appendChild(U.el('div.infobox', {
+      html: '這裡的開關是全站共用的<b>單一來源</b>（老師端的「② 試卷管理」、'
+        + '「⑤ 資料與同步」也讀寫同一組值）。改完按「儲存並套用到所有裝置」，'
+        + '學生在任何一台裝置開啟網站都會拿到同樣的設定。'
+    }));
 
     var mode = U.el('select.input', { style: { maxWidth: '280px' } });
     [['offline', '只存本機（完全離線）'], ['github', '同步到 GitHub repo']].forEach(function (x) {
@@ -143,17 +187,20 @@
     card.appendChild(U.el('div', {}, [U.el('label.tiny.muted', { text: '試卷存放方式' }), mode]));
 
     var hi = U.el('input', { type: 'checkbox' });
-    hi.checked = s.enableHighlight !== false;
+    hi.checked = pol.enableHighlight !== false;
     var ans = U.el('input', { type: 'checkbox' });
-    ans.checked = s.showAnswerAfterSubmit !== false;
+    ans.checked = pol.showAnswerAfterSubmit !== false;
     var rt = U.el('input', { type: 'checkbox' });
-    rt.checked = !!s.allowRetake;
+    rt.checked = !!pol.allowRetake;
+    var ao = U.el('input', { type: 'checkbox' });
+    ao.checked = pol.assignOnly !== false;
 
     card.appendChild(U.el('div.mt2', {},
       [
         [hi, '啟用螢光標示／筆記／生詞本'],
         [ans, '學生提交後可查看正確答案'],
-        [rt, '允許學生重複作答同一份試卷']
+        [rt, '允許學生重複作答同一份試卷'],
+        [ao, '指派後學生才看得到試卷（未指派的不顯示）']
       ].map(function (x) {
         return U.el('label.check', { style: { display: 'flex', marginBottom: '6px' } }, [x[0], U.el('span', { text: x[1] })]);
       })
@@ -161,19 +208,73 @@
 
     card.appendChild(U.el('div.mt2.row', {}, [
       U.el('button.btn.primary.sm', {
-        text: '儲存設定', onclick: function () {
-          Settings.set({
-            quizMode: mode.value,
+        text: '儲存並套用到所有裝置', onclick: function () {
+          Settings.set({ quizMode: mode.value });
+          Settings.setPolicy({
             enableHighlight: hi.checked,
             showAnswerAfterSubmit: ans.checked,
-            allowRetake: rt.checked
+            allowRetake: rt.checked,
+            assignOnly: ao.checked
           });
-          U.toast('已儲存', 'ok');
+          /* 只存本機的話，其他裝置永遠看不到 → 有 GitHub 就一併發佈 */
+          Backend.publishConfig().then(function () {
+            U.toast('已儲存，並發佈給所有裝置', 'ok', 3600);
+            route();
+          }).catch(function () {
+            U.toast('已儲存在這台裝置（尚未設定 GitHub，無法發佈給其他裝置）', 'bad', 5000);
+          });
         }
       }),
       U.el('a.btn.sm', { href: '#/teacher/data', text: '進階：GitHub 與收集端' })
     ]));
     view.appendChild(card);
+
+    /* ---------- 設定一致性：本機 vs 已發佈 ---------- */
+    var cons = U.el('div.card');
+    cons.appendChild(U.el('h3', { text: '設定一致性（本機 ↔ 已發佈）' }));
+    var consBox = U.el('div', {}, [U.el('div.tiny.muted', { text: '正在讀取已發佈的公開設定…' })]);
+    cons.appendChild(consBox);
+    view.appendChild(cons);
+
+    Backend.loadConfig().then(function () {
+      var rows = Backend.configAudit();
+      consBox.innerHTML = '';
+      var bad = rows.filter(function (r) { return !r.ok; });
+      consBox.appendChild(U.el('div' + (bad.length ? '.warnbox' : '.infobox'), {
+        text: bad.length
+          ? ('有 ' + bad.length + ' 項不一致：其他裝置可能看到不一樣的設定，按上面的「儲存並套用到所有裝置」即可同步。')
+          : '本機與已發佈的設定一致，所有裝置拿到的值相同。'
+      }));
+      var tbl = U.el('table.tbl');
+      tbl.innerHTML = '<thead><tr><th>項目</th><th>這台裝置</th><th>已發佈</th><th>狀態</th></tr></thead>';
+      var tb = U.el('tbody');
+      rows.forEach(function (r) {
+        var tr = U.el('tr');
+        tr.appendChild(U.el('td', { text: r.name }));
+        tr.appendChild(U.el('td', { text: String(r.local) }));
+        tr.appendChild(U.el('td', { text: String(r.remote) }));
+        tr.appendChild(U.el('td', {}, [
+          U.el('span.tag' + (r.ok ? '.mint' : '.bad'), { text: r.ok ? '一致' : '不一致' }),
+          r.hint ? U.el('div.tiny.faint', { text: r.hint }) : null
+        ]));
+        tb.appendChild(tr);
+      });
+      tbl.appendChild(tb);
+      consBox.appendChild(U.el('div.tbl-wrap', {}, [tbl]));
+      if (Backend.GitHub.ok()) {
+        consBox.appendChild(U.el('div.row.mt2', {}, [
+          U.el('button.btn.sm', {
+            text: '重新發佈設定給所有裝置', onclick: function () {
+              Backend.publishConfig().then(function () { U.toast('已發佈', 'ok'); route(); })
+                .catch(function (e) { U.toast('發佈失敗：' + e.message, 'bad', 4500); });
+            }
+          })
+        ]));
+      }
+    }).catch(function () {
+      consBox.innerHTML = '';
+      consBox.appendChild(U.el('div.tiny.muted', { text: '讀不到已發佈的公開設定（離線或尚未發佈）。' }));
+    });
 
     /* 本機資料總覽 */
     var stat = U.el('div.card');

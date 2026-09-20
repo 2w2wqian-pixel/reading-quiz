@@ -751,9 +751,23 @@
     var set = Settings.get();
     var canRegister = !!set.allowSelfRegister || !!(set.hook && set.hook.postUrl);
 
+    /* 上一次 Google 登入的結果（被擋掉／取消／失敗）——登入頁要自己說明白，
+       因為使用者可能剛剛才從 Google 頁面被帶回來，沒看到任何 toast。 */
+    function googleNotice() {
+      var G = RQ.googleAuth;
+      if (!G || !G.lastError) return null;
+      var e = G.lastError;
+      G.lastError = null;                       /* 只顯示一次 */
+      if (e.code === 'rq/local-cancel') {
+        return { kind: 'muted', text: '上次的 Google 登入沒有完成（你取消了）。可以再試一次，或改用帳號密碼。' };
+      }
+      return { kind: 'bad', text: e.text };
+    }
+
     function draw(mode) {
       view.innerHTML = '';
       var card = U.el('div.card', { style: { maxWidth: '440px', margin: '26px auto' } });
+      var notice = googleNotice();
 
       var tabs = U.el('div.row', { style: { gap: '6px', marginBottom: '14px' } }, [
         U.el('button.btn.sm' + (mode === 'login' ? '.primary' : ''), {
@@ -769,6 +783,7 @@
 
       if (mode === 'login') {
         card.appendChild(U.el('h2', { text: '學生登入' }));
+        if (notice) card.appendChild(noticeBox(notice));
         var un = U.el('input.input', { placeholder: '使用者帳號' });
         var pw = U.el('input.input', { type: 'password', placeholder: '密碼' });
         card.appendChild(field('帳號', un));
@@ -779,6 +794,10 @@
         });
         card.appendChild(btn);
         pw.addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin(U.trim(un.value), pw.value); });
+
+        var gb = googleBlock(notice);
+        if (gb) card.appendChild(gb);
+
         view.appendChild(card);
         un.focus();
         return;
@@ -793,29 +812,48 @@
         view.appendChild(card);
         return;
       }
+      if (notice) card.appendChild(noticeBox(notice));
       var rName = U.el('input.input', { placeholder: '例如：陳小明' });
       var rClass = U.el('input.input', { placeholder: '例如：2A（可留空）' });
       var rUser = U.el('input.input', { placeholder: '英文或數字，例如 ming123' });
       var rPw = U.el('input.input', { type: 'password', placeholder: '至少 4 個字' });
       var rCode = U.el('input.input', { placeholder: '向老師索取' });
+      var rMail = U.el('input.input', { type: 'email', placeholder: '你的 Google 電子郵件' });
       card.appendChild(field('姓名', rName));
       card.appendChild(field('班別（選填）', rClass));
       card.appendChild(field('自選帳號', rUser));
       card.appendChild(field('自訂密碼', rPw));
       card.appendChild(field('班級代碼', rCode));
+      /* 先填好 email → 之後用 Google 登入會自動認出你，不必再綁定一次。
+         沒填也能註冊，只是第一次用 Google 登入時要多做一次綁定。 */
+      var mailField = field('Google 電子郵件（選填，但強烈建議）', rMail);
+      card.appendChild(mailField);
+      card.appendChild(U.el('div.tiny.faint', {
+        text: '填了之後，以後按「使用 Google 登入」就會直接進站。',
+        style: { marginTop: '-4px', marginBottom: '8px' }
+      }));
       card.appendChild(U.el('button.btn.primary.block.mt2', {
         text: '註冊並登入', onclick: function () { doRegister(); }
       }));
+      var gr = googleBlock(notice, { register: true, mail: rMail });
+      if (gr) card.appendChild(gr);
       view.appendChild(card);
 
       function doRegister() {
         var u = U.trim(rUser.value), p = U.trim(rPw.value), n = U.trim(rName.value);
+        var mail = U.trim(rMail.value).toLowerCase();
         if (!u || !p || !n) { U.toast('姓名、帳號、密碼都要填', 'bad'); return; }
         if (p.length < 4) { U.toast('密碼至少 4 個字', 'bad'); return; }
         if (/\s/.test(u)) { U.toast('帳號不能有空格', 'bad'); return; }
+        if (mail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) { U.toast('電子郵件格式看起來不對', 'bad'); return; }
         Backend.getRoster().then(function (list) {
           if (list.some(function (s) { return String(s.username).toLowerCase() === u.toLowerCase(); })) {
             U.toast('這個帳號已經有人用了，換一個試試', 'bad');
+            return null;
+          }
+          /* email 是「同一個 Email ＝同一位使用者」的依據，不能重複登記 */
+          if (mail && list.some(function (s) { return String(s.email || '').toLowerCase() === mail; })) {
+            U.toast('這個電子郵件已經有人用了，請確認是不是你自己的帳號', 'bad', 4200);
             return null;
           }
           return RQ.crypto.hashPassword(p).then(function (h) {
@@ -825,13 +863,14 @@
               classCode: U.trim(rCode.value),
               createdAt: U.nowISO(), selfRegistered: true
             };
+            if (mail) stu.email = mail;
             return Backend.registerStudent(stu).then(function () { return stu; });
           });
         }).then(function (stu) {
           if (!stu) return;
-          Settings.login({ role: 'student', id: stu.id, name: stu.name, username: stu.username });
+          Settings.login({ role: 'student', id: stu.id, name: stu.name, username: stu.username, method: 'password' });
           U.toast('註冊成功，歡迎 ' + stu.name, 'ok');
-          location.hash = '#/student';
+          RQ.route();
         }).catch(function (e) { U.toast('註冊失敗：' + e.message, 'bad'); });
       }
     }
@@ -841,6 +880,27 @@
       d.appendChild(U.el('label.tiny.muted', { text: label }));
       d.appendChild(input);
       return d;
+    }
+
+    function noticeBox(n) {
+      return U.el('div' + (n.kind === 'bad' ? '.warnbox' : '.infobox'), { text: n.text });
+    }
+
+    /** 登入成功 → 導回「原本造訪的頁面」（沒有就回學生首頁） */
+    function enterAsStudent(stu, method) {
+      Settings.login({
+        role: 'student', id: stu.id,
+        name: stu.name || stu.username, username: stu.username,
+        className: stu.className || '',
+        method: method || 'password',
+        email: String(stu.email || '')
+      });
+      U.toast('歡迎，' + (stu.name || stu.username), 'ok');
+      var back = RQ.googleAuth ? RQ.googleAuth.takeReturn() : '';
+      /* 只接受站內雜湊路徑，避免被塞進外部網址 */
+      if (back && /^#\/[A-Za-z]/.test(back)) location.hash = back;
+      else location.hash = '#/student';
+      if (RQ.route) RQ.route();
     }
 
     function doLogin(name, pass) {
@@ -853,14 +913,319 @@
         if (!stu) { U.toast('找不到此帳號，請確認或改用註冊', 'bad', 3000); return; }
         return RQ.crypto.verifyPassword(pass, stu.pass).then(function (ok) {
           if (!ok) { U.toast('密碼不正確', 'bad'); return; }
-          Settings.login({ role: 'student', id: stu.id, name: stu.name || stu.username, username: stu.username });
-          U.toast('歡迎，' + (stu.name || stu.username), 'ok');
-          location.hash = '#/student';
+          enterAsStudent(stu, 'password');
         });
       }).catch(function (e) { U.toast('登入失敗：' + e.message, 'bad'); });
     }
 
+    /* ---------- Google 帳號登入 ---------- */
+
+    /** 官方「G」標誌（四色），畫成 inline SVG，不依賴外部圖片 */
+    function gIcon() {
+      var NS = 'http://www.w3.org/2000/svg';
+      var svg = document.createElementNS(NS, 'svg');
+      svg.setAttribute('viewBox', '0 0 48 48');
+      svg.setAttribute('width', '18');
+      svg.setAttribute('height', '18');
+      svg.setAttribute('aria-hidden', 'true');
+      [
+        ['#EA4335', 'M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z'],
+        ['#4285F4', 'M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z'],
+        ['#FBBC05', 'M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z'],
+        ['#34A853', 'M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z']
+      ].forEach(function (p) {
+        var el = document.createElementNS(NS, 'path');
+        el.setAttribute('fill', p[0]);
+        el.setAttribute('d', p[1]);
+        svg.appendChild(el);
+      });
+      return svg;
+    }
+
+    /**
+     * 「使用 Google 登入」按鈕。登入頁與註冊頁共用。
+     * opts.register：在註冊頁使用時，若上面已經填了 email，就當作
+     * 「我要用這個 Google 帳號」——登入後直接認領（同一 Email＝同一位使用者）。
+     */
+    function googleBlock(notice, opts) {
+      opts = opts || {};
+      var G = RQ.googleAuth;
+      if (!G || !G.available()) return null;
+      var box = U.el('div.mt3');
+      box.appendChild(U.el('div.tiny.muted', { text: '或', style: { textAlign: 'center' } }));
+      var hint = U.el('div.tiny.mt1');
+      var gbtn = U.el('button.btn.block.mt1', {
+        style: {
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+          background: '#fff', color: '#3A322A', border: '1.5px solid #ECE5D9'
+        }
+      });
+      gbtn.appendChild(gIcon());
+      gbtn.appendChild(document.createTextNode(opts.register ? '使用 Google 帳號登入／註冊' : '使用 Google 登入'));
+      gbtn.addEventListener('click', function () {
+        gbtn.disabled = true;
+        hint.textContent = '';
+        U.toast('正在開啟 Google 登入…', null, 2000);
+        G.signIn().then(function (p) {
+          if (p && p.redirect) return;                 /* 轉址中，本頁會被導走 */
+          return afterGoogle(p, opts);
+        }).catch(function (e) {
+          gbtn.disabled = false;
+          hint.innerHTML = '';
+          hint.appendChild(U.el('span.bad', { text: G.errorText(e) }));
+        });
+      });
+      box.appendChild(gbtn);
+      box.appendChild(hint);
+      box.appendChild(U.el('div.tiny.muted.mt1', {
+        text: '第一次使用時，會請你把 Google 帳號連結到老師建立的名冊帳號。'
+      }));
+      return box;
+    }
+
+    /**
+     * Google 登入成功後：
+     *   ① 名冊上已經有這個 Google 帳號 → 直接進站
+     *   ② 名冊上登記了同一個 email → 自動連結並進站（同一個 Email 視為同一位使用者）
+     *   ③ 都沒有 → 進連結頁
+     * ★ 不論走哪條路，最後的身分都是名冊的 stu.id（絕不用 Google UID）。
+     */
+    function afterGoogle(p, opts) {
+      opts = opts || {};
+      if (!p || !p.uid) {
+        /* 走到這裡代表「沒有拿到帳號」——最常見的原因是使用者在 Google 視窗
+           自己按了取消／返回。那不是故障，所以用中性提示、不要標成紅色錯誤，
+           否則學生會以為網站壞了，反而去點第二次。真正的原因
+           （rq/local-cancel 等）由 GoogleAuth.lastError 記著，下次開登入頁會說明。 */
+        U.toast('已取消 Google 登入，尚未登入', null, 3000);
+        return Promise.resolve(null);
+      }
+      /* 註冊頁：先用上面填的 email 認領，避免又多一次綁定 */
+      var wantMail = String((opts.mail && opts.mail.value) || '').trim().toLowerCase();
+      return Backend.resolveGoogleStudent(p).then(function (stu) {
+        if (stu) return linkIfNeeded(stu, p);
+        if (!wantMail) return null;
+        return Backend.findByEmail(wantMail).then(function (byMail) {
+          if (byMail) return linkIfNeeded(byMail, p);
+          return null;
+        });
+      }).then(function (done) {
+        if (done) return null;
+        drawBind(p);
+        return null;
+      }).catch(function (e) {
+        U.toast('讀取名冊失敗：' + ((e && e.message) || e), 'bad', 5000);
+      });
+    }
+
+    /** 名冊上有這個 email／已綁同一個 UID → 直接進站；還沒綁就順便綁起來 */
+    function linkIfNeeded(stu, p) {
+      if (stu.googleUid === p.uid) {
+        enterAsStudent(stu, 'google');
+        return Promise.resolve(true);
+      }
+      return Backend.bindGoogle(stu.id, p).then(function (bound) {
+        U.toast('已連結你的 Google 帳號', 'ok', 3200);
+        enterAsStudent(bound, 'google');
+        return true;
+      }).catch(function (e) {
+        /* 例如這個 email 已登記給別人：不要硬綁，走正常連結頁讓老師處理 */
+        U.toast('無法自動連結：' + ((e && e.message) || e), 'bad', 6000);
+        return false;
+      });
+    }
+
+    /** 連結頁：把這個 Google 帳號接到名冊上的某一位學生 */
+    function drawBind(p) {
+      view.innerHTML = '';
+      var card = U.el('div.card', { style: { maxWidth: '480px', margin: '26px auto' } });
+      card.appendChild(U.el('h2', { text: '綁定你的帳號' }));
+      card.appendChild(U.el('div.tiny.muted', {
+        text: '已用 ' + (p.email || p.name) + ' 登入。請將它綁定到老師給你的帳號，之後就能一鍵登入。'
+      }));
+      if (p.email) {
+        card.appendChild(U.el('div.infobox.mt2', {
+          html: '名冊上還沒有登記 <b>' + U.esc(p.email) + '</b>。'
+            + '若你的老師已經幫你填過這個電子郵件，請按「重新檢查一次」。'
+        }));
+        var reBtn = U.el('button.btn.sm.block', {
+          text: '重新檢查一次', onclick: function () {
+            reBtn.disabled = true;
+            Backend.resolveGoogleStudent(p).then(function (stu) {
+              if (!stu) { U.toast('名冊上還是沒有這個電子郵件，請改用下面的方式', 'bad', 4200); reBtn.disabled = false; return; }
+              return linkIfNeeded(stu, p);
+            }).catch(function () { reBtn.disabled = false; });
+          }
+        });
+        card.appendChild(reBtn);
+      }
+
+      var labels = ['① 用老師給的帳密', '② 從名單選自己'];
+      var mode = 0;
+      var tabRow = U.el('div.row.mt3', { style: { gap: '6px' } });
+      var body = U.el('div.mt2');
+      labels.forEach(function (t, i) {
+        tabRow.appendChild(U.el('button.btn.sm' + (i === 0 ? '.primary' : ''), {
+          text: t, onclick: function () {
+            mode = i;
+            U.$$('button', tabRow).forEach(function (b, j) {
+              b.className = 'btn sm' + (j === i ? ' primary' : '');
+            });
+            paint();
+          }
+        }));
+      });
+      card.appendChild(tabRow);
+      card.appendChild(body);
+      view.appendChild(card);
+      paint();
+
+      function paint() { if (mode === 0) paintPw(); else paintPick(); }
+
+      function paintPw() {
+        body.innerHTML = '';
+        var un = U.el('input.input', { placeholder: '老師給你的帳號' });
+        var pw = U.el('input.input', { type: 'password', placeholder: '密碼' });
+        body.appendChild(field('帳號', un));
+        body.appendChild(U.el('div', { style: { height: '8px' } }));
+        body.appendChild(field('密碼', pw));
+        body.appendChild(U.el('button.btn.primary.block.mt2', {
+          text: '綁定並開始使用', onclick: function () {
+            var name = U.trim(un.value), pass = pw.value;
+            if (!name || !pass) { U.toast('請輸入帳號與密碼', 'bad'); return; }
+            Backend.getRoster().then(function (list) {
+              var stu = list.filter(function (s) {
+                return String(s.username).toLowerCase() === name.toLowerCase();
+              })[0];
+              if (!stu) { U.toast('找不到此帳號，請確認或改用「從名單選自己」', 'bad', 4200); return null; }
+              return RQ.crypto.verifyPassword(pass, stu.pass).then(function (ok) {
+                if (!ok) { U.toast('密碼不正確', 'bad'); return null; }
+                if (stu.googleUid && stu.googleUid !== p.uid) {
+                  U.toast('這個帳號已經綁過其他 Google 帳號了', 'bad', 4500);
+                  return null;
+                }
+                return Backend.bindGoogle(stu.id, p).then(function (bound) {
+                  U.toast('綁定完成', 'ok');
+                  enterAsStudent(bound, 'google');
+                }).catch(function (e) {
+                  U.toast('綁定失敗：' + ((e && e.message) || e), 'bad', 6000);
+                  return null;
+                });
+              });
+            }).catch(function (e) { U.toast('綁定失敗：' + ((e && e.message) || e), 'bad', 5500); });
+          }
+        }));
+      }
+
+      function paintPick() {
+        body.innerHTML = '';
+        body.appendChild(U.el('div.tiny.muted', { text: '載入名單中…' }));
+        /* 班級代碼是「防止誤選」的門檻，不是真正的安全機制（名冊本來就是公開檔）。
+           老師有設就要求輸入；沒設就直接顯示名單。 */
+        var code = U.trim(Settings.get().classCode || '');
+        var codeInp = null;
+        var wrap = null;
+        var list = [];
+
+        Backend.getRoster().then(function (rows) {
+          list = rows || [];
+          body.innerHTML = '';
+          if (code) {
+            codeInp = U.el('input.input', { placeholder: '向老師索取' });
+            body.appendChild(field('班級代碼', codeInp));
+            codeInp.addEventListener('input', U.debounce(renderList, 250));
+          }
+          wrap = U.el('div.mt2', { style: { maxHeight: '260px', overflow: 'auto' } });
+          body.appendChild(wrap);
+          renderList();
+        }).catch(function (e) {
+          body.innerHTML = '';
+          body.appendChild(U.el('div.warnbox', { text: '讀取名冊失敗：' + ((e && e.message) || e) }));
+        });
+
+        function renderList() {
+          if (!wrap || !wrap.isConnected) return;
+          wrap.innerHTML = '';
+          if (code && (!codeInp || U.trim(codeInp.value) !== code)) {
+            wrap.appendChild(U.el('div.tiny.muted', { text: '輸入班級代碼後會顯示可選的名單。' }));
+            return;
+          }
+          if (!list.length) {
+            wrap.appendChild(U.el('div.tiny.muted', { text: '名冊是空的，請老師先建立你的帳號。' }));
+            return;
+          }
+          list.forEach(function (s) {
+            var bound = !!s.googleUid;
+            var own = bound && s.googleUid === p.uid;
+            var btn = U.el('button.btn.sm.block', {
+              style: { marginTop: '6px', textAlign: 'left' },
+              text: (s.className ? '（' + s.className + '）' : '') + (s.name || s.username)
+                + (own ? '　—　這是你' : (bound ? '　—　已綁定其他帳號' : ''))
+            });
+            btn.disabled = bound;
+            btn.addEventListener('click', function () {
+              U.confirm('確定你是「' + (s.name || s.username) + '」嗎？綁定後不能自行更改。', function () {
+                Backend.bindGoogle(s.id, p).then(function (bound2) {
+                  U.toast('綁定完成', 'ok');
+                  enterAsStudent(bound2, 'google');
+                }).catch(function (e) { U.toast('綁定失敗：' + ((e && e.message) || e), 'bad', 6000); });
+              });
+            });
+            wrap.appendChild(btn);
+          });
+        }
+      }
+    }
+
+    /* enterAsStudent 與導回原頁的邏輯統一定義在上面（兩個入口共用同一套） */
+
+    /* 讓導覽列也能走同一條 Google 流程（RQ.student.loginGoogle） */
+    Student._afterGoogle = afterGoogle;
+    Student._drawBind = drawBind;
+    Student._enterAsStudent = enterAsStudent;
+
     draw('login');
+
+    /* 剛剛若是用「轉址」方式去 Google 登入，回到本頁時要把結果接回來 */
+    if (RQ.googleAuth) {
+      RQ.googleAuth.handleRedirect().then(function (p) { if (p) afterGoogle(p); })
+        .catch(function () { });
+    }
+  };
+
+  /**
+   * 導覽列的 Google 登入入口：直接吃「已取得的 Google 帳號資料」。
+   * 流程與學生登入頁完全一樣（同一個 afterGoogle），
+   * 差別只在於：若需要綁定，會先把使用者帶到學生登入頁再顯示連結畫面。
+   */
+  Student.loginGoogle = function (p) {
+    /* 沒有帳號資料＝使用者取消了（見 afterGoogle 的說明），中性處理 */
+    if (!p || !p.uid) { RQ.util.toast('已取消 Google 登入，尚未登入', null, 3000); return Promise.resolve(null); }
+    var view = document.getElementById('view');
+    if (RQ.util.trim(location.hash) !== '#/student') {
+      location.hash = '#/student';          /* 綁定畫面掛在學生登入頁底下 */
+    }
+    if (RQ.route) RQ.route();
+    /* route() 之後 DOM 已重建，再交給共用的流程接手 */
+    return RQ.backend.resolveGoogleStudent(p).then(function (stu) {
+      if (stu) {
+        if (stu.googleUid === p.uid) { Student._enterAsStudent(stu, 'google'); return null; }
+        return RQ.backend.bindGoogle(stu.id, p).then(function (bound) {
+          RQ.util.toast('已連結你的 Google 帳號', 'ok', 3200);
+          Student._enterAsStudent(bound, 'google');
+          return null;
+        }).catch(function (e) {
+          RQ.util.toast('無法自動連結：' + ((e && e.message) || e), 'bad', 6000);
+          return null;
+        });
+      }
+      /* 沒對上 → 顯示連結畫面（沿用學生登入頁那一套） */
+      Student._drawBind(p);
+      return null;
+    }).catch(function (e) {
+      RQ.util.toast('讀取名冊失敗：' + ((e && e.message) || e), 'bad', 5000);
+      return null;
+    });
   };
 
   Student.home = function (view) {
@@ -877,11 +1242,18 @@
     Promise.all([
       Backend.listQuizzes(),
       Backend.mySubmissions(who.id).catch(function () { return Store.submission.ofStudent(who.id); }),
-      Backend.myVocab(who.id).catch(function () { return []; })
+      Backend.myVocab(who.id).catch(function () { return []; }),
+      Backend.getRoster().catch(function () { return []; })
     ]).then(function (r) {
       var quizzes = r[0].filter(function (q) { return q.published !== false || q._src === 'local'; });
       var mine = r[1] || [];
       var myVocab = r[2] || [];
+      /* 班別可能被老師改過 → 以名冊的最新值為準，否則「依班別指派」的作業會看不到 */
+      var fromRoster = (r[3] || []).filter(function (s) { return s && s.id === who.id; })[0] || {};
+      var me = { id: who.id, className: U.trim(fromRoster.className || who.className || '') };
+      if (me.className !== (who.className || '')) {
+        Settings.set({ session: Object.assign({}, who, { className: me.className }) });
+      }
       box.innerHTML = '';
 
       if (!quizzes.length) {
@@ -896,12 +1268,8 @@
       /* 年級排序用（小學 → 中學） */
       var GRADES = ['小一', '小二', '小三', '小四', '小五', '小六',
         '中一', '中二', '中三', '中四', '中五', '中六'];
-      function isAssigned(m) {
-        var a = m.assignment;
-        if (!a) return false;
-        if (a.all) return true;
-        return (a.ids || []).indexOf(who.id) >= 0;
-      }
+      /* 與老師端共用同一套判定（含「依班別指派」），避免兩邊規則不一致 */
+      function isAssigned(m) { return Backend.isAssigned(m, me); }
       function doneOf(m) { return mine.filter(function (s) { return s.quizId === m.id; }); }
       function quizCard(m, done, isHomework) {
         var card = U.el('div.card.mb0' + (isHomework && !done.length ? '.tinted' : ''));

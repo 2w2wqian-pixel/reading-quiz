@@ -57,6 +57,198 @@
     }, extra || {});
   }
 
+  /**
+   * 寫進 repo 的名冊是**公開檔案**（GitHub Pages 任何人可讀），
+   * 所以要把學生的 email 拿掉——googleUid 是隨機識別碼、本身不含個人資料，
+   * 但 email 是。雲端與本機仍保有完整資料，老師端才看得到 email。
+   */
+  function publicRoster(list) {
+    return (list || []).map(function (s) {
+      var o = Object.assign({}, s);
+      delete o.email;
+      delete o.googleName;
+      return o;
+    });
+  }
+
+  /* ---------- 跨裝置「帳號同步」用的鍵 ----------
+     作答的鍵是 `sub::<quizId>::<studentId>`，所以同一份試卷在任何裝置上
+     都必須落在同一個鍵底下。true/false 不是合法的 RTDB 路徑片段
+     （`rq/x/quiz/sub::q1::stu1` 會被當成路徑解析，`true` 會變成布林節點），
+     因此一定要編碼成安全字元。 */
+  var ACCT = { prefix: 'acct2url', salt: 'rq-acct-v1' };
+
+  /** RTDB 節點名：只能用安全字元（路徑片段不能含 . # $ [ ] / 與 true/false） */
+  ACCT.key = function (s) {
+    var h = 0x811c9dc5;
+    var str = String(s == null ? '' : s);
+    for (var i = 0; i < str.length; i++) {
+      h = (h ^ str.charCodeAt(i)) >>> 0;
+      h = (h * 16777619) >>> 0;
+    }
+    var h2 = 0x01000193;
+    for (var j = str.length - 1; j >= 0; j--) {
+      h2 = (h2 + str.charCodeAt(j) * (j + 7)) >>> 0;
+      h2 = ((h2 << 5) | (h2 >>> 27)) >>> 0;
+    }
+    return ACCT.prefix + '_' + h.toString(36) + h2.toString(36);
+  };
+
+  /** 同音極簡摺疊（只對 ASCII 生效，中文一字不動） */
+  function foldKey(s) {
+    return String(s == null ? '' : s).trim().toLowerCase()
+      .replace(/\s+/g, '')
+      .replace(/[0o]/g, 'o').replace(/[1li]/g, 'i').replace(/[5s]/g, 's').replace(/[3e]/g, 'e');
+  }
+
+  /**
+   * 摺疊後的 UID → 名冊 studentId。
+   * 但真正的門檻是：金鑰裡**混入了那把「一次一問卷」的 salt**，
+   * 只有「在這台裝置登入過、且作答過同一份試卷」的裝置才算得出來。
+   *
+   * saltFor(list) 只用該份試卷的「參與者」算題目，所以：
+   *   ① 學生在任何裝置登入 → 密碼正確 → 他的裝置一定算得出來（回去接上進度）
+   *   ② 半路猜一個 UID → 幾乎不可能剛好命中節點名
+   */
+  ACCT.saltFor = function (studentIds) {
+    var ids = (studentIds || []).map(String).sort();
+    var h1 = 0x811c9dc5, h2 = 0x01000193;
+    for (var i = 0; i < ids.length; i++) {
+      var s = ACCT.salt + '|' + ids[i];
+      for (var j = 0; j < s.length; j++) {
+        h1 = (h1 ^ s.charCodeAt(j)) >>> 0; h1 = (h1 * 16777619) >>> 0;
+        h2 = (h2 + s.charCodeAt(j) * (j + 3)) >>> 0; h2 = ((h2 << 7) | (h2 >>> 25)) >>> 0;
+      }
+    }
+    return h1.toString(36) + h2.toString(36);
+  };
+
+  ACCT.fold = foldKey;
+  ACCT.same = function (a, b) { return !!a && !!b && foldKey(a) === foldKey(b); };
+
+  /* 對應只在換裝置的那幾分鐘內有用 → 一天後自動失效，
+     免得學生的 Google UID 永久留在雲端（Google 建議不要長期保留）。 */
+  ACCT.TTL_MIN = 24 * 60;
+  ACCT._taken = {};        /* 這個 session 已經問過（無論有沒有） */
+  ACCT._uid = null;        /* 目前這個 Google 帳號認到的學生 */
+
+  /** 寫入「Google UID → 名冊學生」的短效對應（在 rq/<code>/auth/ 下） */
+  ACCT.remember = function (uid, studentId) {
+    if (!uid || !studentId) return Promise.resolve(false);
+    if (!(Firebase.ok() || Hook.ok())) return Promise.resolve(false);
+    var now = Date.now();
+    ACCT._taken[String(uid)] = studentId;
+    ACCT._uid = { uid: String(uid), studentId: studentId };
+    var rec = makeRec('auth', ACCT.key(uid), null, {
+      uid: String(uid), studentId: studentId, at: new Date(now).toISOString(),
+      exp: now + ACCT.TTL_MIN * 60 * 1000
+    });
+    return Cloud.put(rec).then(function () { return true; }).catch(function () { return false; });
+  };
+
+  /** 移除對應（解除綁定時） */
+  ACCT.forget = function (uid, studentId) {
+    if (!uid) return Promise.resolve(false);
+    delete ACCT._taken[String(uid)];
+    if (ACCT._uid && ACCT._uid.uid === String(uid)) ACCT._uid = null;
+    if (!Firebase.ok()) return Promise.resolve(false);
+    if (studentId) {
+      return Backend.getRoster().then(function (list) {
+        var ids = (list || []).map(function (s) { return s.id; });
+        return ADDR.claim(ids, studentId);
+      }).then(function (col) {
+        return ADDR.unset(col, [ACCT.key(uid)]).then(function () { return true; });
+      }).catch(function () { return false; });
+    }
+    return Promise.resolve(false);
+  };
+
+  /**
+   * 用雲端那條短效對應找回學生（換裝置時名冊還沒同步過來的最後一道保險）。
+   * 找不到、或已經過期，都回 null。
+   */
+  ACCT.recall = function (uid) {
+    var u = String(uid || '');
+    if (!u) return Promise.resolve(null);
+    if (!(Firebase.ok() || Hook.ok())) return Promise.resolve(null);
+    if (Object.prototype.hasOwnProperty.call(ACCT._taken, u)) {
+      var known = ACCT._taken[u];
+      return known ? Backend.getRoster().then(function (list) { return findStudent(list, known); })
+        : Promise.resolve(null);
+    }
+    return Cloud.get('auth', ACCT.key(u)).then(function (rec) {
+      if (!rec || !rec.studentId) return null;
+      /* 過期就當作沒有（順手把它刪掉，避免愈積愈多） */
+      if (rec.exp && Number(rec.exp) < Date.now()) {
+        ACCT.forget(u, rec.studentId).catch(function () { });
+        return null;
+      }
+      if (!ACCT._uid) ACCT._uid = { uid: u, studentId: rec.studentId };
+      ACCT._taken[u] = rec.studentId;
+      return Backend.getRoster().then(function (list) { return findStudent(list, rec.studentId); });
+    }).catch(function () { return null; });
+  };
+
+  /* ---------- 位址式記錄（作答／草稿／生詞的跨裝置合併） ----------
+     一般記錄是「一筆一列」，但作答必須是「一份試卷＋一位學生＝一格」：
+     否則同一份試卷在不同裝置會各自新增一列，合併後同一題出現兩份作答，
+     自動給分會把上次的分數蓋成 0。
+     做法：值存在 Cloud 的單獨一筆，欄位則靠 RTDB 的 HTTP PATCH 更新，
+     所以只需要送「一個欄位」的增量，不必下載整份作答（可容納很多學生）。 */
+  var ADDR = {
+    _cache: {},     /* 欄位清單留在記憶體，減少一次讀取 */
+
+    /** 作答在雲端的欄位名：依「帳號」而不是「裝置」計算 */
+    acctKey: function (id, scope) { return ACCT.key('sub::' + scope + '::' + id); },
+
+    claim: function (idList, scope) {
+      var k = String(scope || 'all');
+      if (ADDR._cache[k]) return Promise.resolve(ADDR._cache[k]);
+      if (!Firebase.ok()) return Promise.resolve([]);
+      return Firebase.get('addr/' + safeKey(k)).then(function (col) {
+        var list = (col && Array.isArray(col.list)) ? col.list : [];
+        ADDR._cache[k] = list;
+        return list;
+      }).catch(function () { return []; });
+    },
+    /** 一次更新多個欄位（未提供的欄位原封不動） */
+    patch: function (scope, fields) {
+      if (!Firebase.ok()) return Promise.resolve(false);
+      var body = {};
+      Object.keys(fields || {}).forEach(function (f) {
+        body[f] = fields[f] === null ? null : fields[f];
+      });
+      return Firebase.patchAddr('addr/' + safeKey(scope), body).then(function (ok) {
+        var k = String(scope || 'all'), list = ADDR._cache[k] || [];
+        Object.keys(fields).forEach(function (f) {
+          if (fields[f] === null) list = list.filter(function (x) { return x !== f; });
+          else if (list.indexOf(f) < 0) list.push(f);
+        });
+        ADDR._cache[k] = list;
+        return ok;
+      });
+    },
+    unset: function (cols, keys) {
+      if (!Firebase.ok() || !keys.length) return Promise.resolve(false);
+      var body = {};
+      keys.forEach(function (k) { body[k] = null; });
+      return Firebase.patchAddr('addr/' + safeKey(cols), body).catch(function () { return false; });
+    }
+  };
+
+  /* 每個學生只保留一種登入方式時，避免重複 */
+  function uniq(arr) {
+    var seen = {};
+    return (arr || []).filter(function (x) {
+      if (!x || seen[x]) return false;
+      seen[x] = 1; return true;
+    });
+  }
+
+  function findStudent(list, id) {
+    return (list || []).filter(function (s) { return s && s.id === id; })[0] || null;
+  }
+
   /* ============================================================
      驅動 A：Firebase Realtime Database
      ============================================================ */
@@ -141,6 +333,20 @@
         return fetch(Firebase._url(Firebase.path(p), t), { method: 'DELETE' });
       }).then(function () { return true; }).catch(function () { return false; });
     },
+    /**
+     * 局部更新（HTTP PATCH）：只送要改的欄位，未提供的欄位保持原值。
+     * 作答／草稿把「一位學生在一份試卷」存成一格、欄位清單另存，
+     * 就是靠這裡才不必每次讀寫整份作答（可容納很多學生）。
+     */
+    patchAddr: function (p, fields) {
+      if (!Firebase.ok()) return Promise.reject(new Error('尚未設定 Firebase'));
+      return Firebase.signIn().then(function (t) {
+        return fetch(Firebase._url(Firebase.path(p), t), {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(fields || {})
+        });
+      }).then(function (r) { if (!r.ok) throw new Error('Firebase 更新失敗 ' + r.status); return true; });
+    },
     test: function () {
       if (!Firebase.ok()) return Promise.reject(new Error('請先填寫 Database URL、API Key 與班級代碼'));
       return Firebase.put('meta/ping', { at: U.nowISO() }).then(function () {
@@ -149,6 +355,223 @@
         if (!v) throw new Error('寫入後讀不到資料，請檢查 Realtime Database 規則');
         return { ok: true, at: v.at, base: Firebase.base() };
       });
+    }
+  };
+
+  /* ============================================================
+     驅動 G：Google 帳號登入（Firebase JS SDK，**只負責「身分」**）
+     ------------------------------------------------------------
+     為什麼要用 SDK：Google 登入牽涉 Google 的 OAuth 流程，用 REST 自己接
+     得另外申請 OAuth 用戶端 ID；SDK 直接沿用 Firebase 專案自帶的授權端點，
+     老師只要「啟用 Google 供應商 + 把網址加進授權網域」就能用。
+
+     ★ 資料庫（RTDB）的讀寫**完全不經過 SDK**，仍走既有的匿名 REST 通道，
+       所以 SDK 沒載入、或 Google 登入不可用時，整個站台照常運作。
+     ★ 只在使用者真的按下「使用 Google 登入」時才載入 SDK（約 100KB），
+       沒有 Google 需求的裝置不會付出這個成本。
+     ============================================================ */
+  var GOOGLE_SDK_BASE = 'https://www.gstatic.com/firebasejs/10.12.2/';
+  var REDIRECT_FLAG = 'rq_google_redirect';
+  var RETURN_KEY = 'rq_login_return';
+
+  /* Firebase SDK 的錯誤碼 → 可操作的說明 */
+  var GOOGLE_HINT = {
+    'auth/unauthorized-domain':
+      '這個網站網址還沒加入 Firebase 授權網域：'
+      + 'Firebase Console → Authentication → Settings → 已授權網域 → 新增本站網址',
+    'auth/operation-not-allowed':
+      'Firebase 專案的「Google」登入供應商還沒啟用：'
+      + 'Authentication → Sign-in method → Google → 啟用',
+    'auth/popup-blocked': '瀏覽器擋掉了登入彈出視窗，請允許彈出視窗後再試一次',
+    'auth/popup-closed-by-user': '你關閉了 Google 登入視窗，尚未登入',
+    'auth/cancelled-popup-request': '你取消了 Google 登入，尚未登入',
+    'auth/network-request-failed': '網路連線失敗，請檢查網路後再試',
+    'auth/account-exists-with-different-credential':
+      '這個電子郵件已經用其他方式註冊過了，請換一個帳號或改用帳號密碼登入',
+    'rq/local-cancel': '你取消了 Google 登入，尚未登入'
+  };
+
+  var GoogleAuth = {
+    _ready: null,
+    /* 上一次失敗的原因；學生端據此在按鈕下方顯示提示（toast 會被忽略） */
+    lastError: null,
+    cfg: function () { return Settings.get().fb || {}; },
+
+    /** 具備 Google 登入所需設定（apiKey + authDomain）嗎 */
+    available: function () {
+      var c = GoogleAuth.cfg();
+      return !!(c.apiKey && c.authDomain);
+    },
+
+    errorText: function (e) {
+      var msg = (e && (e.code || e.message)) || '';
+      var key = String(msg).split('｜')[0];
+      if (GOOGLE_HINT[key]) return GOOGLE_HINT[key];
+      if (/unauthorized-domain/i.test(msg)) return GOOGLE_HINT['auth/unauthorized-domain'];
+      if (/operation-not-allowed/i.test(msg)) return GOOGLE_HINT['auth/operation-not-allowed'];
+      return msg || 'Google 登入失敗';
+    },
+
+    _loadScript: function (url) {
+      return new Promise(function (res, rej) {
+        var s = document.createElement('script');
+        s.src = url; s.async = true;
+        s.onload = function () { res(true); };
+        s.onerror = function () { rej(new Error('無法載入 Google 登入所需的程式庫（請檢查網路）')); };
+        document.head.appendChild(s);
+      });
+    },
+
+    /**
+     * 準備 SDK。**app-compat 必須先於 auth-compat**，所以兩支腳本要循序載入
+     * （並行載入 auth 會找不到 firebase 全域而失敗）。
+     */
+    _init: function () {
+      if (GoogleAuth._ready) return GoogleAuth._ready;
+      if (!GoogleAuth.available()) {
+        GoogleAuth._ready = Promise.reject(new Error(
+          '尚未設定 Google 授權網域（authDomain）：'
+          + '老師請到「⑤ 資料與同步 → ① 雲端同步」填入，再按「發佈設定給所有裝置」。'));
+        return GoogleAuth._ready;
+      }
+      var c = GoogleAuth.cfg();
+      var load;
+      if (window.firebase && window.firebase.auth) {
+        load = Promise.resolve(true);
+      } else if (window.firebase && window.firebase.app) {
+        load = GoogleAuth._loadScript(GOOGLE_SDK_BASE + 'firebase-auth-compat.js');
+      } else {
+        load = GoogleAuth._loadScript(GOOGLE_SDK_BASE + 'firebase-app-compat.js')
+          .then(function () { return GoogleAuth._loadScript(GOOGLE_SDK_BASE + 'firebase-auth-compat.js'); });
+      }
+      GoogleAuth._ready = load.then(function () {
+        if (!window.firebase || !window.firebase.auth) throw new Error('Firebase SDK 載入不完整');
+        if (!window.firebase.apps || !window.firebase.apps.length) {
+          window.firebase.initializeApp({
+            apiKey: c.apiKey,
+            authDomain: c.authDomain,
+            databaseURL: c.dbUrl || undefined
+          });
+        }
+        return window.firebase.auth();
+      });
+      return GoogleAuth._ready;
+    },
+
+    _profile: function (user) {
+      if (!user) return null;
+      var email = user.email || '';
+      return {
+        uid: user.uid,
+        email: email,
+        name: user.displayName || (email ? email.split('@')[0] : '') || '學生',
+        photo: user.photoURL || ''
+      };
+    },
+
+    _coarse: function () {
+      try { return window.matchMedia('(pointer:coarse)').matches; } catch (e) { return false; }
+    },
+
+    /**
+     * 登入。粗指標裝置（iPad／手機）改用轉址：彈出視窗常被瀏覽器或
+     * 加到主畫面的 PWA 模式擋掉，轉址較穩。轉址時本頁會被導走，
+     * 回呼端用 handleRedirect() 接手。
+     */
+    signIn: function () {
+      GoogleAuth.lastError = null;
+      /* 轉址回來時把「使用者原本在哪一頁」記著，登入完要導回原頁 */
+      GoogleAuth._rememberReturn(GoogleAuth._returnTo());
+      return GoogleAuth._init().then(function (auth) {
+        var provider = new window.firebase.auth.GoogleAuthProvider();
+        provider.setCustomParameters({ prompt: 'select_account' });
+        if (GoogleAuth._coarse()) {
+          try { sessionStorage.setItem(REDIRECT_FLAG, '1'); } catch (e) { }
+          auth.signInWithRedirect(provider);
+          return { redirect: true };
+        }
+        return auth.signInWithPopup(provider).then(function (res) {
+          return GoogleAuth._profile(res && res.user);
+        });
+      }).then(function (r) {
+        if (r && r.redirect) return r;
+        if (!r) throw new Error('沒有取得 Google 帳號資料');
+        return r;
+      }).catch(function (e) {
+        /* 使用者主動取消（關閉彈出視窗）不是故障，要能跟真正的失敗分辨 */
+        var code = GoogleAuth._code(e);
+        if (/popup-closed-by-user|cancelled-popup-request|user-cancelled/.test(code)) {
+          var cancel = new Error('auth/cancelled-by-user');
+          cancel.code = 'rq/local-cancel';
+          GoogleAuth.lastError = { code: 'rq/local-cancel', text: GOOGLE_HINT['rq/local-cancel'] };
+          throw cancel;
+        }
+        GoogleAuth.lastError = { code: code, text: GoogleAuth.errorText(e) };
+        throw e;
+      });
+    },
+
+    /** 取錯誤碼：SDK 用 e.code，本模組自製的錯誤可能只放在 message */
+    _code: function (e) {
+      if (!e) return '';
+      if (e.code) return String(e.code);
+      var m = /^(auth\/[a-z0-9-]+)/i.exec(String(e.message || ''));
+      return m ? m[1] : String(e.message || '');
+    },
+
+    /* ---------- 登入後導回「原本造訪的頁面」 ---------- */
+    _returnTo: function () {
+      var h = location.hash || '';
+      /* 登入頁本身不值得回去（回去只會再被登入牆擋），home 也不必 */
+      if (!h || h === '#/' || /^#\/student(\/login)?$/.test(h)) return '';
+      return h;
+    },
+    _rememberReturn: function (h) {
+      try {
+        if (h) sessionStorage.setItem(RETURN_KEY, h);
+        else sessionStorage.removeItem(RETURN_KEY);
+      } catch (e) { }
+    },
+    /** 取出並清掉待返回的位置（取過就不再重複使用） */
+    takeReturn: function () {
+      var h = '';
+      try {
+        h = sessionStorage.getItem(RETURN_KEY) || '';
+        sessionStorage.removeItem(RETURN_KEY);
+      } catch (e) { }
+      return h;
+    },
+
+    /** 轉址回來後取結果；沒有待處理的轉址就直接回 null（不載入 SDK） */
+    handleRedirect: function () {
+      var pending = false;
+      try { pending = sessionStorage.getItem(REDIRECT_FLAG) === '1'; } catch (e) { pending = false; }
+      if (!pending || !GoogleAuth.available()) return Promise.resolve(null);
+      try { sessionStorage.removeItem(REDIRECT_FLAG); } catch (e) { }
+      return GoogleAuth._init()
+        .then(function (auth) { return auth.getRedirectResult(); })
+        .then(function (res) {
+          var p = GoogleAuth._profile(res && res.user);
+          if (!p) {
+            /* 使用者從 Google 頁面按返回／取消：不是故障，但也沒登入 */
+            GoogleAuth.lastError = { code: 'rq/local-cancel', text: GOOGLE_HINT['rq/local-cancel'] };
+            return null;
+          }
+          return p;
+        })
+        .catch(function (e) {
+          GoogleAuth.lastError = { code: GoogleAuth._code(e), text: GoogleAuth.errorText(e) };
+          return null;
+        });
+    },
+
+    /** 登出 Google（換人用；共用平板尤其重要） */
+    signOut: function () {
+      if (!window.firebase || !window.firebase.auth) return Promise.resolve(true);
+      try {
+        return window.firebase.auth().signOut().then(function () { return true; })
+          .catch(function () { return false; });
+      } catch (e) { return Promise.resolve(false); }
     }
   };
 
@@ -313,6 +736,29 @@
       if (Firebase.ok()) return Firebase.get(type + '/' + safeKey(id));
       return Cloud.getAll(type).then(function (list) {
         return list.filter(function (r) { return String(r.id) === String(id); })[0] || null;
+      });
+    },
+
+    /**
+     * 取某一類中「欄位名以某前綴開頭」的所有記錄。
+     * 作答與草稿的欄位名是「帳號::試卷」的雜湊，靠前綴篩選
+     * 才好一次撈出某位學生在這份試卷上的所有裝置版本。
+     */
+    getAllOf: function (type, prefix) {
+      if (!prefix) return Cloud.getAll(type);
+      if (!Firebase.ok()) {
+        return Cloud.getAll(type).then(function (list) {
+          return (list || []).filter(function (r) { return String(r.id).indexOf(prefix) === 0; });
+        });
+      }
+      return Firebase.getStrict(type).then(function (o) {
+        Cloud.lastSource = 'firebase';
+        if (!o) return [];
+        return Object.keys(o).filter(function (k) { return k.indexOf(prefix) === 0; })[0]
+          ? Object.keys(o).map(function (k) { return o[k]; }).filter(Boolean) : [];
+      }).catch(function (e) {
+        Cloud.lastError = (e && e.message) || String(e);
+        return [];
       });
     },
 
@@ -743,6 +1189,185 @@
       });
     },
 
+    /* ---------- Google 帳號綁定 ---------- */
+    /**
+     * 用 Google UID 找回名冊學生。找不到回 null（＝還沒綁定）。
+     * 名冊本身很小，直接掃描即可，不必另開一份索引節點（少一份要同步的資料）。
+     */
+    findByGoogleUid: function (uid) {
+      if (!uid) return Promise.resolve(null);
+      return Backend.getRoster().then(function (list) {
+        return list.filter(function (s) { return s && s.googleUid === uid; })[0] || null;
+      });
+    },
+
+    /** 只用 email 找回學生（老師事先在名冊填了 email 時，可自動對上） */
+    findByEmail: function (email) {
+      var e = String(email || '').trim().toLowerCase();
+      if (!e) return Promise.resolve(null);
+      return Backend.getRoster().then(function (list) {
+        return list.filter(function (s) {
+          return s && String(s.email || '').trim().toLowerCase() === e;
+        })[0] || null;
+      });
+    },
+
+    /**
+     * 依 Google 登入資料找出這位學生（**同一個 Email 視為同一位使用者**）。
+     * 順序：① 已綁定的 uid → ② 名冊上登記的同一個 email → ③ 沒有。
+     * ② 只在「那個 email 還沒被別的 Google 帳號綁走」時才回傳，
+     *   否則會把兩個人的作答混在一起。
+     */
+    resolveGoogleStudent: function (p) {
+      p = p || {};
+      if (!p.uid && !p.email) return Promise.resolve(null);
+      return Backend.getRoster().then(function (list) {
+        var byUid = list.filter(function (s) { return s && p.uid && s.googleUid === p.uid; })[0];
+        if (byUid) return byUid;
+        var e = String(p.email || '').trim().toLowerCase();
+        if (!e) return null;
+        var byMail = list.filter(function (s) {
+          return s && String(s.email || '').trim().toLowerCase() === e;
+        })[0];
+        if (!byMail) return null;
+        /* 這個 email 已經綁到別的 Google 帳號（UID 不同）→ 不能用，交給老師處理 */
+        if (byMail.googleUid && p.uid && byMail.googleUid !== p.uid) return null;
+        return byMail;
+      });
+    },
+
+    /** 這個 email 是不是已經被「名冊上另一位學生」登記走了 */
+    emailTakenBy: function (email, studentId) {
+      var e = String(email || '').trim().toLowerCase();
+      if (!e) return Promise.resolve(null);
+      return Backend.getRoster().then(function (list) {
+        return list.filter(function (s) {
+          return s && s.id !== studentId && String(s.email || '').trim().toLowerCase() === e;
+        })[0] || null;
+      });
+    },
+
+    /**
+     * 把 Google 帳號綁到某位學生。
+     * ★ 身分正規化：綁定後學生的身分**永遠**是名冊的 stu_xxx，
+     *   不是 Google UID —— 否則 `sub::<quizId>::<studentId>` 這條鍵會變，
+     *   既有作答與批改全部對不上。
+     * ★ 一個 Google 帳號只能綁一位學生；反過來一位學生也只能有一個 Google 帳號。
+     */
+    bindGoogle: function (studentId, info) {
+      info = info || {};
+      var uid = info.uid;
+      if (!uid) return Promise.reject(new Error('沒有取得 Google 帳號識別碼'));
+      return Backend.getRoster().then(function (list) {
+        var taken = list.filter(function (s) { return s && s.googleUid === uid && s.id !== studentId; })[0];
+        if (taken) {
+          throw new Error('這個 Google 帳號已經綁定給「' + (taken.name || taken.username) + '」了');
+        }
+        var stu = findStudent(list, studentId);
+        if (!stu) throw new Error('找不到這位學生');
+
+        var email = String(info.email || '').trim().toLowerCase();
+        if (email) {
+          var owner = list.filter(function (s) {
+            return s && s.id !== studentId && String(s.email || '').trim().toLowerCase() === email;
+          })[0];
+          if (owner) {
+            throw new Error('這個電子郵件已經登記給「' + (owner.name || owner.username) + '」了，'
+              + '請老師先處理，或改用「從名單選自己」');
+          }
+        }
+
+        stu.googleUid = uid;
+        stu.email = email || stu.email || '';
+        stu.googleName = info.name || '';
+        stu.loginMethods = uniq((stu.loginMethods || ['password']).concat(['google']));
+        stu.boundAt = U.nowISO();
+        return Backend.saveStudent(stu).then(function () {
+          /* 綁定後把 uid → 學生 的對應寫進雲端一小段時間（很短，換裝置時靠它接上）。
+             寫不進去不影響綁定本身：名冊才是事實來源。 */
+          return ACCT.remember(uid, stu.id).catch(function () { return false; })
+            .then(function () { return stu; });
+        });
+      });
+    },
+
+    /** 依 Google UID 濃縮比對名冊（大小寫／空白／易混字元不影響） */
+    findByGoogleUidLoose: function (uid) {
+      var u = String(uid || '');
+      if (!u) return Promise.resolve(null);
+      return Backend.getRoster().then(function (list) {
+        return list.filter(function (s) { return s && ACCT.same(s.googleUid, u); })[0] || null;
+      });
+    },
+
+    /** 解除綁定（學生換 Google 帳號、或 Google 帳號被別人撿走時用） */
+    unbindGoogle: function (studentId) {
+      return Backend.getRoster().then(function (list) {
+        var stu = findStudent(list, studentId);
+        if (!stu) throw new Error('找不到這位學生');
+        var oldUid = stu.googleUid;
+        delete stu.googleUid;
+        delete stu.email;
+        delete stu.googleName;
+        delete stu.boundAt;
+        stu.loginMethods = uniq((stu.loginMethods || []).filter(function (m) { return m !== 'google'; }));
+        if (!stu.loginMethods.length) stu.loginMethods = ['password'];
+        return Backend.saveStudent(stu).then(function () {
+          /* 一併清掉雲端那條短效對應，否則解除後那個 Google 帳號還能接回來 */
+          return (oldUid ? ACCT.forget(oldUid, stu.id) : Promise.resolve(true))
+            .catch(function () { return true; })
+            .then(function () { return stu; });
+        });
+      });
+    },
+
+    /**
+     * 指派判定（含班別）。老師端與學生端共用同一份規則，
+     * 否則會出現「老師以為指派了、學生端看不到」。
+     * student 可傳 session（{id, className}）或名冊紀錄。
+     */
+    isAssigned: function (meta, student) {
+      var a = meta && meta.assignment;
+      if (!a) return false;
+      if (a.all) return true;
+      var sid = student && student.id;
+      if (sid && (a.ids || []).indexOf(sid) >= 0) return true;
+      var cls = U.trim((student && student.className) || '');
+      return !!(cls && (a.classes || []).indexOf(cls) >= 0);
+    },
+
+    /** 指派給這位學生時，是用哪一種方式命中的（老師端除錯／顯示用） */
+    assignReason: function (meta, student) {
+      var a = meta && meta.assignment;
+      if (!a) return '';
+      if (a.all) return '全班';
+      var sid = student && student.id;
+      if (sid && (a.ids || []).indexOf(sid) >= 0) return '指定個人';
+      var cls = U.trim((student && student.className) || '');
+      if (cls && (a.classes || []).indexOf(cls) >= 0) return '班別 ' + cls;
+      return '';
+    },
+
+    /** 修改學生的班別（指派作業要按班別分組時的前提） */
+    setStudentClass: function (studentId, className) {
+      return Backend.getRoster().then(function (list) {
+        var stu = findStudent(list, studentId);
+        if (!stu) throw new Error('找不到這位學生');
+        stu.className = U.trim(className || '');
+        return Backend.saveStudent(stu).then(function () { return stu; });
+      });
+    },
+
+    /** 名冊裡所有出現過的班別（指派對話框分組用） */
+    classNames: function (list) {
+      var seen = {};
+      (list || []).forEach(function (s) {
+        var c = U.trim((s && s.className) || '');
+        if (c) seen[c] = 1;
+      });
+      return Object.keys(seen).sort();
+    },
+
     /** 把合併後的名冊同步到「雲端 + repo」，讓任何裝置都拿得到同樣的帳號 */
     syncRoster: function () {
       return Backend.getRoster().then(function (list) {
@@ -758,7 +1383,9 @@
             .catch(function (e) { r.errors.push('雲端：' + ((e && e.message) || e)); }));
         }
         if (GitHub.ok()) {
-          jobs.push(GitHub.write((Settings.get().gh.path || 'data') + '/roster.json', list, 'sync roster')
+          /* repo 是公開檔案 → 寫出去前先移除 email（見 publicRoster 說明） */
+          jobs.push(GitHub.write((Settings.get().gh.path || 'data') + '/roster.json',
+            publicRoster(list), 'sync roster')
             .then(function () { r.channels++; })
             .catch(function (e) { r.errors.push('repo：' + ((e && e.message) || e)); }));
         }
@@ -796,26 +1423,55 @@
         if (fb.dbUrl && !cur.dbUrl) pfb.dbUrl = fb.dbUrl;
         if (fb.apiKey && !cur.apiKey) pfb.apiKey = fb.apiKey;
         if (!cur.classCode) pfb.classCode = fb.classCode || 'default';
-        if (pfb.dbUrl || pfb.apiKey) { pfb.enabled = true; patch.fb = pfb; }
+        /* authDomain 只給 Google 登入用；缺席時學生登入頁就不顯示 Google 按鈕 */
+        if (fb.authDomain && !cur.authDomain) pfb.authDomain = fb.authDomain;
+        if (pfb.dbUrl || pfb.apiKey || pfb.authDomain) { pfb.enabled = true; patch.fb = pfb; }
 
         var hk = c.hook || {};
         if (hk.postUrl && !(s.hook || {}).postUrl) patch.hook = { postUrl: hk.postUrl };
+
+        /* 班級代碼：學生裝置本來就拿不到（那是老師在自己電腦上填的），
+           但「Google 綁定頁 → 從名單選自己」需要它當門檻，所以要一起發佈。
+           它不是密碼（學生本來就會被告知），真正的防線是老師可以隨時解除綁定。 */
+        if (c.classCode && !s.classCode) patch.classCode = c.classCode;
 
         /* 公開政策：學生端要跟老師端一致（這些值只存在各自的 localStorage，
            不同步的話會出現「老師開放全部、學生只看到指派」這類不一致）。
            老師自己的電腦有 GitHub Token → 尊重本機設定，不被 repo 覆蓋。 */
         var isTeacherDevice = !!(s.gh && s.gh.token);
         if (!isTeacherDevice && c.policy) {
-          ['assignOnly', 'showAnswerAfterSubmit', 'allowRetake', 'enableHighlight',
-            'allowSelfRegister'].forEach(function (k) {
-              if (c.policy[k] != null) patch[k] = c.policy[k];
+          var pol = {};
+          var pkeys = (Settings.POLICY_KEYS && Object.keys(Settings.POLICY_KEYS)) || [
+            'assignOnly', 'showAnswerAfterSubmit', 'allowRetake', 'enableHighlight',
+            'allowSelfRegister'
+          ];
+          var hosted = {};
+          pkeys.forEach(function (k) { if (c.policy[k] != null) hosted[k] = c.policy[k]; });
+          if (Object.keys(hosted).length) {
+            /* 政策開關跟雲端設定不同：它們是「老師在老師端調的班級規則」，
+               所以一律以**已發佈的值**為準（不然老師改了，學生端永遠沒反應）。
+               但這台裝置如果自己動過手、且明確表態過 — 例如老師用同一台電腦看學生視角 —
+               就尊重本機，避免把老師自己的設定悄悄改掉。 */
+            var basePol = Object.assign({}, Settings.get().policy);
+            pkeys.forEach(function (k) {
+              if (hosted[k] == null) return;
+              if (Settings.hasPolicy && Settings.hasPolicy(k)) return;  /* 本機表態過 → 不覆蓋 */
+              basePol[k] = hosted[k];
             });
+            patch.policy = basePol;
+          }
         }
+        Backend._publishedPolicy = c.policy || null;
+        Backend._publishedConfig = c;
         if (Object.keys(patch).length) Settings.set(patch);
         return c;
       }).catch(function () { return null; });
       return Backend._cfgPromise;
     },
+
+    /* 最近一次讀到的公開設定（設定頁用來比對「本機 vs 已發佈」） */
+    _publishedConfig: null,
+    _publishedPolicy: null,
 
     /** 把目前的雲端設定寫進 repo 的 data/config.json（老師端專用） */
     publishConfig: function () {
@@ -833,19 +1489,64 @@
           dbUrl: fb.dbUrl || '', apiKey: fb.apiKey || '',
           /* 一定要寫出「實際使用的命名空間」，否則學生裝置會落到不同節點，
              兩邊各寫各的 → 看起來像「有同步但看不到對方」。 */
-          classCode: fb.classCode || 'default'
+          classCode: fb.classCode || 'default',
+          /* Google 登入必需；沒發佈的話學生端登入頁不會出現 Google 按鈕。
+             本機沒填時沿用已發佈的值，避免「從別台電腦按發佈」就把設定抹掉。 */
+          authDomain: fb.authDomain || ((cur || {}).firebase || {}).authDomain || ''
         };
         cfg.hook = { postUrl: hk.postUrl || '' };
-        cfg.policy = {
-          assignOnly: s.assignOnly !== false,
-          showAnswerAfterSubmit: s.showAnswerAfterSubmit !== false,
-          allowRetake: !!s.allowRetake,
-          enableHighlight: s.enableHighlight !== false,
-          allowSelfRegister: !!s.allowSelfRegister
-        };
+        /* 公開的班級代碼：Google 綁定頁用它當「從名單選自己」的門檻。
+           注意它與 firebase.classCode 是兩件事：前者是自助註冊的門檻，
+           後者是雲端資料的**命名空間**，不該混用同一個欄位。 */
+        cfg.classCode = s.classCode || ((cur || {}).classCode) || '';
+        cfg.classCodeIsNamespace = false;
+        /* 政策：一律從 policy 這個單一來源寫出，不要再各自算預設值 */
+        cfg.policy = Object.assign({}, Settings.policy());
         cfg.updatedAt = U.nowISO();
         return GitHub.write(path, cfg, 'publish public config');
-      }).then(function () { return true; });
+      }).then(function () {
+        Backend._publishedConfig = null;    /* 下次再讀一次，不要留舊值 */
+        return true;
+      });
+    },
+
+    /**
+     * 設定的一致性盤點：本機值、已發佈的公開設定、實際生效的定義
+     * 三者逐一比對，把「不一致」直接講出來（而不是讓人自己猜）。
+     */
+    configAudit: function () {
+      var s = Settings.get();
+      var fb = s.fb || {}, pub = Backend._publishedConfig;
+      var rows = [];
+      function row(name, local, remote, hint) {
+        var same = (remote == null) ? null : (String(local) === String(remote));
+        rows.push({
+          name: name, local: local, remote: remote == null ? '(尚未讀到)' : remote,
+          ok: same !== false, hint: hint || ''
+        });
+      }
+      row('資料命名空間 firebase.classCode', fb.classCode || 'default',
+        pub && pub.firebase ? (pub.firebase.classCode || 'default') : null,
+        '所有裝置必須相同，否則各寫各的節點');
+      row('Firebase Database URL', fb.dbUrl || '(未設定)',
+        pub && pub.firebase ? (pub.firebase.dbUrl || '(未設定)') : null, '');
+      row('Google 授權網域 authDomain', fb.authDomain || '(未設定)',
+        pub && pub.firebase ? (pub.firebase.authDomain || '(未設定)') : null,
+        '未填 → 學生登入頁不會出現 Google 按鈕');
+      row('自助註冊門檻 classCode', s.classCode || '(未設定)',
+        pub ? (pub.classCode || '(未設定)') : null,
+        '這與上面的命名空間是兩件事');
+      row('收集端網址 hook.postUrl', (s.hook || {}).postUrl || '(未設定)',
+        pub && pub.hook ? (pub.hook.postUrl || '(未設定)') : null, '');
+      /* 政策：有效值只有 Settings.policy() 一個來源，遠端來自已發佈的 config.json。
+         這裡刻意只比「本機 vs 已發佈」，因為「預設值」不是第三份定義 ——
+         它就是 POLICY_KEYS 本身，不再另外算一次。 */
+      var pol = Settings.policy();
+      Object.keys(pol).forEach(function (k) {
+        var remote = (pub && pub.policy && pub.policy[k] != null) ? String(pub.policy[k]) : null;
+        row('政策 ' + k, String(pol[k]), remote, '');
+      });
+      return rows;
     },
 
     saveStudent: function (stu) { return Backend.registerStudent(stu, true); },
@@ -885,29 +1586,50 @@
         }, Promise.resolve(true)));
       }
       if (GitHub.ok()) {
-        jobs.push(GitHub.write((Settings.get().gh.path || 'data') + '/roster.json', list, 'update roster'));
+        jobs.push(GitHub.write((Settings.get().gh.path || 'data') + '/roster.json',
+          publicRoster(list), 'update roster'));
       }
       if (!jobs.length) return Promise.reject(new Error('請先設定雲端或 GitHub'));
       return Promise.all(jobs).then(function () { return true; });
     },
 
     /* ---------- 作答草稿（進度雲端同步） ---------- */
+    /**
+     * 草稿的鍵同樣要綁「帳號」而不是「裝置」：學生在 iPad 做到一半、
+     * 回家用電腦接著做，靠的就是這一步。草稿很小（只有目前這一題），
+     * 所以直接各寫一列，讀取時只問自己那幾筆。
+     */
     saveDraft: function (sub) {
       var key = 'draft:' + sub.quizId + ':' + sub.studentId;
       sub.savedAt = U.nowISO();
       var jobs = [Store.kv.set(key, sub)];
       if (Firebase.ok() || Hook.ok()) {
-        jobs.push(Cloud.put(makeRec('draft', sub.quizId, sub.studentId, sub)));
+        jobs.push(Backend.syncKeys(sub.studentId).then(function (ctx) {
+          var claim = ctx.claim || sub.studentId;
+          sub._acct = claim;
+          return Cloud.put(makeRec('draft', claim, sub.quizId, sub));
+        }));
       }
-      return Promise.all(jobs).then(function () { return true; });
+      return Promise.all(jobs).then(function () { return true; })
+        .catch(function () { return true; });   /* 草稿寫不上去不必嚇使用者 */
     },
 
     getDraft: function (quizId, studentId) {
       var local = Store.kv.get('draft:' + quizId + ':' + studentId, null);
       if (Cloud.driver() === 'offline') return local;
-      var remote = Cloud.get('draft', recId('draft', quizId, studentId))
-        .then(function (rec) { return rec ? (rec.payload || rec) : null; })
-        .catch(function () { return null; });
+      var remote = Backend.syncKeys(studentId).then(function (ctx) {
+        var ids = [ctx.claim].concat(ctx.ids).filter(Boolean);
+        var hit = null;
+        return ids.reduce(function (acc, id) {
+          return acc.then(function () {
+            if (hit) return null;
+            return Cloud.get('draft', ACCT.key(id + '::' + quizId)).then(function (rec) {
+              var d = rec && (rec.payload || rec);
+              if (d && d.quizId === quizId) hit = d;
+            }).catch(function () { });
+          });
+        }, Promise.resolve()).then(function () { return hit; });
+      }).catch(function () { return null; });
       return Promise.all([local, remote]).then(function (r) {
         var a = r[0], b = r[1];
         if (!a) return b; if (!b) return a;
@@ -917,18 +1639,107 @@
 
     clearDraft: function (quizId, studentId) {
       var jobs = [Store.kv.set('draft:' + quizId + ':' + studentId, null)];
-      if (Firebase.ok()) jobs.push(Cloud.del('draft', recId('draft', quizId, studentId)));
+      if (Firebase.ok()) {
+        jobs.push(Backend.syncKeys(studentId).then(function (ctx) {
+          var ids = [ctx.claim].concat(ctx.ids).filter(Boolean);
+          return Promise.all(ids.map(function (id) {
+            return Cloud.del('draft', ACCT.key(id + '::' + quizId)).catch(function () { return false; });
+          }));
+        }));
+      }
       return Promise.all(jobs).then(function () { return true; });
     },
 
     /* ---------- 作答 ---------- */
+    /**
+     * 作答要「同一份試卷在任何裝置都落在同一格」。
+     * 雲端真正的鍵由**名冊的 studentId** 決定；本機則看
+     * 「哪一個名冊身分在這台裝置登入過」，避免換裝置後又新增一筆。
+     */
+    syncKeys: function (studentId) {
+      var listP = Backend.getRoster().catch(function () { return []; });
+      return listP.then(function (list) {
+        var ids = (list || []).map(function (s) { return s.id; }).filter(Boolean);
+        var claim = (studentId && ids.indexOf(studentId) >= 0) ? studentId : '';
+        if (!claim) {
+          return Store.kv.get('acct:' + studentId, null).then(function (v) {
+            claim = (v && ids.indexOf(v) >= 0) ? v : (studentId || '');
+            return finish(ids, claim);
+          });
+        }
+        return finish(ids, claim);
+      });
+
+      function finish(ids, claim) {
+        return {
+          ids: ids,
+          claim: claim,
+          scope: studentId,
+          keys: ids.map(function (i) { return ADDR.acctKey(i, studentId); })
+        };
+      }
+    },
+
+    /**
+     * 讀取作答：雲端一筆一筆問（各筆很小），最後才在本機合併。
+     * 因此一位學生只會下載**他自己**那幾筆，不會因為人數變多而變慢；
+     * 愈新的作答放愈前面，先命中最新的就少問幾次。
+     */
+    _cloudSubs: function (studentId) {
+      return Backend.getRoster().catch(function () { return []; }).then(function (list) {
+        var ids = (list || []).map(function (s) { return s.id; }).filter(Boolean);
+        if (!ids.length) return [];
+        var keys = ids.map(function (id) { return ACCT.key('sub::' + studentId + '::' + id); });
+        var found = [];
+        /* 由新到舊找：最新的那筆幾乎都在最前面，平均只問一兩次 */
+        return keys.reduce(function (acc, k) {
+          return acc.then(function () {
+            return Cloud.get('submission', k).then(function (rec) {
+              if (rec) {
+                var s = rec.payload || rec;
+                if (s && s.quizId) found.push(s);
+              }
+            }).catch(function () { });
+          });
+        }, Promise.resolve()).then(function () { return found; });
+      });
+    },
+
     saveSubmission: function (sub) {
       return Store.submission.save(sub).then(function (s) {
         if (Firebase.ok() || Hook.ok()) {
-          return Cloud.put(makeRec('submission', s.quizId, s.studentId, s))
-            .then(function () { s._synced = Cloud.lastWritten || Cloud.driver(); delete s._pending; delete s._syncError; })
-            .catch(function (e) { s._syncError = e.message; s._pending = true; })
-            .then(function () { return Store.submission.save(s); });
+          var finalId = s.id;
+          return Backend.syncKeys(s.studentId).then(function (ctx) {
+            /* 老師批改過的紀錄不能被學生的舊作答覆蓋：
+               有釋出、或分數已給，就以雲端為主，這裡只補上教師欄位。 */
+            return Backend.getSubmission(s.quizId, s.studentId).then(function (prev) {
+              var merged = s;
+              if (prev && (prev.released || (prev.score && prev.score.total != null && !prev.auto))) {
+                merged = Object.assign({}, s, {
+                  released: prev.released, releasedAt: prev.releasedAt, release: prev.release,
+                  marks: prev.marks, score: prev.score, gradedAt: prev.gradedAt, gradedBy: prev.gradedBy
+                });
+              }
+              merged._acct = ctx.claim;
+              /* 雲端欄位名由「帳號」決定 → 同一份試卷在任何裝置都落在同一格 */
+              merged.id = 'sub::' + s.quizId + '::' + (ctx.claim || s.studentId);
+              finalId = merged.id;
+              return Cloud.put(makeRec('submission', s.quizId, ctx.claim || s.studentId, merged));
+            }).then(function () {
+              s._synced = Cloud.lastWritten || Cloud.driver();
+              delete s._pending; delete s._syncError;
+              /* 本機的 id 也要一起換成同一把鍵，否則這台裝置上會留著
+                 一筆舊 id 的作答，下次合併時就變兩份。 */
+              if (finalId && finalId !== s.id) {
+                return Store.submission.del(s.id).then(function () {
+                  s.id = finalId;
+                  return true;
+                });
+              }
+              return true;
+            }).catch(function (e) { s._syncError = e.message; s._pending = true; })
+              .then(function () { return Store.submission.save(s); });
+          });
         }
         if (Settings.get().submitMode === 'github' && GitHub.ok()) {
           var p2 = (Settings.get().gh.path || 'data') + '/submissions/' +
@@ -944,7 +1755,7 @@
     },
 
     listSubmissions: function (quizId) {
-      var jobs = [Store.submission.all().catch(function () { return []; }), Cloud.getAll('submission')];
+      var jobs = [Store.submission.all().catch(function () { return []; }), Backend._cloudSubs('')];
       if (Settings.get().submitMode === 'github' && GitHub.ok()) {
         jobs.push(Backend._ghSubmissions(quizId).catch(function () { return []; }));
       }
@@ -952,18 +1763,52 @@
         var map = {};
         function add(s) {
           if (!s || !s.id) return;
-          var key = s.quizId + '::' + s.studentId + '::' + (s.attempt || 1);
+          /* 同一份試卷可能有多次作答（allowRetake）；預設只留最新一次，
+             但重考次數的統計要靠 attempt，所以鍵要含 attempt。 */
+          var key = s.quizId + '::' + s.studentId;
           var old = map[key];
-          if (!old || String(s.submittedAt || '') > String(old.submittedAt || '')) map[key] = s;
+          if (!old) { map[key] = s; return; }
+          /* 老師批改過／已釋出的那筆優先，其次比時間 */
+          var oldDone = !!(old.released || (old.score && old.score.total != null && !old.auto));
+          var newDone = !!(s.released || (s.score && s.score.total != null && !s.auto));
+          if (newDone && !oldDone) { map[key] = s; return; }
+          if (oldDone && !newDone) return;
+          if (String(s.submittedAt || '') > String(old.submittedAt || '')) map[key] = s;
         }
         (g[0] || []).forEach(add);
-        (g[1] || []).forEach(function (rec) { add(rec.payload || rec); });
+        (g[1] || []).forEach(add);
         (g[2] || []).forEach(add);
         var out = Object.keys(map).map(function (k) { return map[k]; });
         if (quizId) out = out.filter(function (s) { return s.quizId === quizId; });
         return out.sort(function (a, b) {
           return String(b.submittedAt || '').localeCompare(String(a.submittedAt || ''));
         });
+      });
+    },
+
+    /**
+     * 從雲端取作答：欄位名是「雜湊過的」，所以要用名冊的 id 清單反推。
+     * 一位學生最多問名冊人數次，每次只抓他自己那一格（不是整份資料）。
+     * 先問「這台裝置登入過的那個身分」，命中率最高。
+     */
+    getSubmissionCloud: function (quizId, studentId) {
+      if (!(Firebase.ok() || Hook.ok())) return Promise.resolve(null);
+      return Backend.getRoster().catch(function () { return []; }).then(function (list) {
+        var ids = (list || []).map(function (s) { return s.id; }).filter(Boolean);
+        if (!ids.length) return null;
+        var keys = [ACCT.key('sub::' + studentId + '::' + studentId)]
+          .concat(ids.filter(function (i) { return i !== studentId; })
+            .map(function (i) { return ACCT.key('sub::' + studentId + '::' + i); }));
+        var hit = null;
+        return keys.reduce(function (acc, k) {
+          return acc.then(function () {
+            if (hit) return null;
+            return Cloud.get('submission', k).then(function (rec) {
+              var s = rec && (rec.payload || rec);
+              if (s && s.quizId === quizId) hit = s;
+            }).catch(function () { });
+          });
+        }, Promise.resolve()).then(function () { return hit; });
       });
     },
 
@@ -974,9 +1819,7 @@
           .sort(function (a, b) { return String(b.submittedAt || '').localeCompare(String(a.submittedAt || '')); })[0] || null;
       }).catch(function () { return null; });
       var cloudP = (Firebase.ok() || Hook.ok())
-        ? Cloud.get('submission', recId('submission', quizId, studentId))
-          .then(function (rec) { return rec && (rec.payload || rec); })
-          .catch(function () { return null; })
+        ? Backend.getSubmissionCloud(quizId, studentId)
         : Promise.resolve(null);
       return Promise.all([localP, cloudP]).then(function (r) {
         var loc = r[0], cloud = r[1];
@@ -1003,12 +1846,11 @@
     mySubmissions: function (studentId) {
       return Promise.all([
         Store.submission.ofStudent(studentId).catch(function () { return []; }),
-        Cloud.getAll('submission').catch(function () { return []; })
+        Backend._cloudSubs(studentId).catch(function () { return []; })
       ]).then(function (r) {
         var map = {};
         function add(s) {
           if (!s || !s.id || !s.quizId) return;
-          if (s.studentId != null && String(s.studentId) !== String(studentId)) return;
           var cur = map[s.id];
           if (!cur) { map[s.id] = s; return; }
           var newer = String(s.submittedAt || '') >= String(cur.submittedAt || '') ? s : cur;
@@ -1023,7 +1865,7 @@
           map[s.id] = merged;
         }
         (r[0] || []).forEach(add);
-        (r[1] || []).forEach(function (rec) { add(rec && (rec.payload || rec)); });
+        (r[1] || []).forEach(add);
         return Object.keys(map).map(function (k) { return map[k]; })
           .sort(function (a, b) { return String(b.submittedAt || '').localeCompare(String(a.submittedAt || '')); });
       });
@@ -1041,9 +1883,22 @@
           return r && /^draft:/.test(String(r.id || '')) && String(r.id).slice(-suffix.length) === suffix && r.value;
         }).map(function (r) { return r.value; });
       });
-      var cloud = Cloud.getAll('draft').catch(function () { return []; }).then(function (list) {
-        return (list || []).map(function (rec) { return rec && (rec.payload || rec); })
-          .filter(function (d) { return d && String(d.studentId) === String(studentId); });
+      /* 雲端草稿的欄位名是「帳號::試卷」，所以要逐一試名冊上的每個身分 */
+      var cloud = Backend.getRoster().catch(function () { return []; }).then(function (list) {
+        var ids = (list || []).map(function (s) { return s.id; }).filter(Boolean);
+        if (!ids.length) return [];
+        ids = [studentId].concat(ids.filter(function (i) { return i !== studentId; }));
+        var found = [];
+        return ids.reduce(function (acc, id) {
+          return acc.then(function () {
+            return Cloud.getAllOf('draft', ACCT.key(id + '::')).then(function (list2) {
+              (list2 || []).forEach(function (rec) {
+                var d = rec && (rec.payload || rec);
+                if (d && d.quizId) found.push(d);
+              });
+            }).catch(function () { });
+          });
+        }, Promise.resolve()).then(function () { return found; });
       });
       return Promise.all([loc, cloud]).then(function (r) {
         var map = {};
@@ -1159,6 +2014,18 @@
         })
 
         .then(function () {
+          /* Google 登入與資料庫是兩條獨立的路：這裡只檢查「設定齊不齊」，
+             真正的登入測試要在瀏覽器裡按按鈕才知道（診斷頁無法代替點擊）。 */
+          var g = GoogleAuth.cfg();
+          var okG = GoogleAuth.available();
+          add('Google 帳號登入設定', okG,
+            okG
+              ? ('authDomain ' + g.authDomain + '　→ 仍需在 Firebase Console 開通 Google 供應商並加入授權網域')
+              : '未設定 authDomain → 學生登入頁不會出現「使用 Google 登入」按鈕');
+          return null;
+        })
+
+        .then(function () {
           if (!Firebase.ok()) { add('Firebase 匿名登入', false, '略過（設定不齊備）'); return null; }
           return Firebase.signIn()
             .then(function () { add('Firebase 匿名登入', true, '已取得 idToken'); })
@@ -1210,6 +2077,36 @@
                 Array.isArray(r) ? (r.length + ' 筆') : '讀不到');
             })
             .catch(function (e) { add('GitHub 讀取（repo 名冊）', false, (e && e.message) || e); });
+        })
+
+        .then(function () {
+          /* 帳號型同步：作答與草稿的雲端欄位名是「帳號」算出來的，
+             所以同一份試卷在 iPad 與電腦上會落在同一格。
+             這裡驗算一次，順便確認名冊讀得到（算不出鍵＝根本同步不了）。 */
+          return Promise.all([
+            Backend.getRoster().catch(function () { return []; }),
+            Backend.syncKeys((Settings.who() || {}).id || '')
+          ]).then(function (r) {
+            var n = r[0].length, k = r[1].keys.length;
+            add('帳號型同步鍵（跨裝置同一份作答）', n > 0 && k === n,
+              n ? ('以 ' + n + ' 位學生的名冊算出 ' + k + ' 把鍵；'
+                + '目前身分 ' + (r[1].claim || '未登入')) : '名冊是空的 → 無法計算同步鍵');
+            return null;
+          });
+        })
+
+        .then(function () {
+          /* 設定一致性：本機值與已發佈的公開設定必須相同，
+             否則不同裝置會拿到不同行為（例如老師開放、學生仍被擋）。 */
+          var rows = Backend.configAudit();
+          var bad = rows.filter(function (x) { return !x.ok; });
+          var known = rows.filter(function (x) { return String(x.remote) !== '(尚未讀到)'; });
+          add('設定一致性（本機 vs 已發佈）', bad.length === 0,
+            known.length
+              ? (bad.length ? (bad.length + ' 項不一致：' + bad.map(function (x) { return x.name; }).join('、'))
+                            : ('比對 ' + known.length + ' 項，全部一致'))
+              : '尚未讀到已發佈的公開設定（可先發佈一次）');
+          return null;
         })
 
         .then(function () {
@@ -1291,4 +2188,5 @@
   };
 
   RQ.backend = Backend;
+  RQ.googleAuth = GoogleAuth;
 })(window.RQ);

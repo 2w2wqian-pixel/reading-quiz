@@ -6,16 +6,19 @@
   "notes": [
     "index.json 由老師端的『發佈到 GitHub』自動維護，不需手動編輯。",
     "roster.json 為學生帳號（僅存放 salt:hash，不存明文密碼）。",
-    "學生讀取這些檔案是同源靜態讀取，不需要任何 Token。"
+    "學生讀取這些檔案是同源靜態讀取，不需要任何 Token。",
+    "classCode（上層）＝學生自助註冊的門檻；firebase.classCode＝雲端資料的命名空間。兩者是不同的事。"
   ],
   "firebase": {
     "dbUrl": "https://chinese-6e50a-default-rtdb.asia-southeast1.firebasedatabase.app/",
     "apiKey": "AIzaSyCkOon9YiFLddQTZjlqKQwwQZX3w__mpVg",
-    "classCode": "default"
+    "classCode": "default",
+    "authDomain": "chinese-6e50a.firebaseapp.com"
   },
   "hook": {
     "postUrl": "https://script.google.com/macros/s/AKfycbzAZmyvepOIXmxdSJnbW6V_S7uLzK76jaIJ3EQQLCQ8b68Z1CeQ0yFEIHos1ypHE3I/exec"
   },
+  "classCodeIsNamespace": false,
   "updatedAt": "2026-09-18T23:53:30",
   "policy": {
     "assignOnly": true,

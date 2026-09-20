@@ -197,6 +197,23 @@
      設定（localStorage）：含 GitHub Token、後端模式等
      ============================================================ */
   var LS_KEY = 'rq.settings.v1';
+
+  /* ============================================================
+     設定的**單一來源**
+     ------------------------------------------------------------
+     這些開關以前散在「設定頁」「試卷管理頁」「學生名冊頁」各自一份，
+     每一份都用 `s.x !== false` 自己判斷預設值 —— 只要有人改了一處的預設，
+     三處就會互相矛盾（例如老師端說開放、學生端仍被擋）。
+     現在一律由 POLICY_KEYS 定義，讀寫都經過 Settings.policy()。
+     ============================================================ */
+  var POLICY_KEYS = {
+    assignOnly: true,             /* 學生只看得到老師指派的試卷 */
+    showAnswerAfterSubmit: true,  /* 學生提交後可看答案 */
+    allowRetake: false,           /* 允許重複作答 */
+    enableHighlight: true,        /* 螢光筆／筆記／生詞本 */
+    allowSelfRegister: false      /* 開放學生自助註冊 */
+  };
+
   var DEFAULT_SETTINGS = {
     /* 試卷存放：offline | github */
     quizMode: 'offline',
@@ -206,37 +223,58 @@
     gh: { owner: '', repo: '', branch: 'main', token: '', path: 'data' },
     /* 收集端（學生提交／註冊／草稿，全部走同一個端點） */
     hook: { postUrl: '', getUrl: '', key: '', sheetUrl: '' },
-    /* Firebase Realtime Database（跨裝置雲端同步） */
-    fb: { enabled: false, dbUrl: '', apiKey: '', classCode: '' },
-    /* 自助註冊 */
+    /* Firebase Realtime Database（跨裝置雲端同步）
+       authDomain 只有「Google 帳號登入」用到（學生按 Google 登入時才載入 SDK），
+       留空不影響既有的匿名通道與資料庫讀寫。 */
+    fb: { enabled: false, dbUrl: '', apiKey: '', classCode: '', authDomain: '' },
+    /* 自助註冊的班級代碼（與雲端命名空間 classCode 是兩件事，見 teacher.js 說明） */
     classCode: '',
-    allowSelfRegister: false,
     /* 雲端草稿 */
     cloudDraft: true,
-    /* 學生端只顯示「老師指派」的試卷（指派後學生才看得到） */
-    assignOnly: true,
     /* 老師密碼（"salt:hash"） */
     teacherPass: '',
-    /* 學生是否可在提交前看答案 */
-    showAnswerAfterSubmit: true,
-    /* 允許學生重複作答 */
-    allowRetake: false,
-    /* 是否啟用螢光筆 */
-    enableHighlight: true,
+    /* policy 是一組不可分割的開關 → 寫成巢狀物件，避免與其他欄位混在一起 */
+    policy: Object.assign({}, POLICY_KEYS),
     /* 目前登入者（session） */
     session: null
   };
+
+  /** 布林轉換：只認真正的布林、0/1 與 "true"/"false"，
+   *  其他值（含 undefined）一律回 fallback。 */
+  function toBool(v, fallback) {
+    if (v === true || v === 'true' || v === 1 || v === '1') return true;
+    if (v === false || v === 'false' || v === 0 || v === '0') return false;
+    return fallback;
+  }
 
   var Settings = {
     get: function () {
       var s;
       try { s = JSON.parse(localStorage.getItem(LS_KEY) || '{}'); }
       catch (e) { s = {}; }
-      return Object.assign({}, DEFAULT_SETTINGS, s, {
+      var merged = Object.assign({}, DEFAULT_SETTINGS, s, {
         gh: Object.assign({}, DEFAULT_SETTINGS.gh, s.gh || {}),
         hook: Object.assign({}, DEFAULT_SETTINGS.hook, s.hook || {}),
-        fb: Object.assign({}, DEFAULT_SETTINGS.fb, s.fb || {})
+        fb: Object.assign({}, DEFAULT_SETTINGS.fb, s.fb || {}),
+        /* ⚠ 這裡**不能**寫成 Object.assign({}, POLICY_KEYS, s.policy)：
+           POLICY_KEYS 是「預設值」，不是「已儲存的值」。先併進去的話，
+           沒被改過的開關也會長得像「使用者存過的偏好」，
+           loadConfig() 就再也分不出「這台裝置已經表態」還是「只是套用預設」，
+           結果公開政策永遠蓋不掉本機預設 → 學生端與老師端各看各的。
+           正確做法：只放使用者真的存過的值，缺的留 undefined，
+           要讀「有效值」時再走 Settings.policy() 補預設。 */
+        policy: Object.assign({}, s.policy || {})
       });
+      /* 相容舊版：舊機器的設定是把五個開關攤在最上層，
+         搬進 policy 之後才不會「同一件事有兩個地方在定義」。 */
+      Object.keys(POLICY_KEYS).forEach(function (k) {
+        if (s[k] !== undefined) merged.policy[k] = toBool(s[k], POLICY_KEYS[k]);
+      });
+      /* 攤平一份「有效值」給既有程式碼讀（只活在回傳值上，不寫回 localStorage） */
+      Object.keys(POLICY_KEYS).forEach(function (k) {
+        merged[k] = merged.policy[k] === undefined ? POLICY_KEYS[k] : merged.policy[k];
+      });
+      return merged;
     },
     set: function (patch) {
       var cur = Settings.get();
@@ -244,16 +282,50 @@
       if (patch.gh) next.gh = Object.assign({}, cur.gh, patch.gh);
       if (patch.hook) next.hook = Object.assign({}, cur.hook, patch.hook);
       if (patch.fb) next.fb = Object.assign({}, cur.fb, patch.fb);
+      /* 開關一律寫進 policy；攤平的舊欄位順手清掉，避免兩份定義並存 */
+      var pol = Object.assign({}, cur.policy, patch.policy || {});
+      Object.keys(POLICY_KEYS).forEach(function (k) {
+        if (patch[k] !== undefined && !patch.policy) pol[k] = patch[k];
+        delete next[k];
+      });
+      next.policy = pol;
       localStorage.setItem(LS_KEY, JSON.stringify(next));
-      return next;
+      return Settings.get();
     },
     reset: function () { localStorage.removeItem(LS_KEY); return Settings.get(); },
+
+    /* ---- 開關（單一來源） ---- */
+    /** 讀單一開關的**有效值**（使用者存過就用它，沒存過才用 POLICY_KEYS 的預設） */
+    policy: function (key) {
+      var p = Settings.get().policy;
+      if (key == null) {
+        var all = {};
+        Object.keys(POLICY_KEYS).forEach(function (k) {
+          all[k] = p[k] === undefined ? POLICY_KEYS[k] : p[k];
+        });
+        return all;
+      }
+      return p[key] === undefined ? POLICY_KEYS[key] : p[key];
+    },
+    /** 寫單一開關（會被視為「這台裝置表態了」） */
+    setPolicy: function (patch) {
+      var p = {};
+      p.policy = Object.assign({}, Settings.get().policy, patch);
+      return Settings.set(p);
+    },
+    /** 這台裝置是否「明確表態過」某個開關（loadConfig 用來決定可否被公開政策覆蓋） */
+    hasPolicy: function (key) {
+      var p = Settings.get().policy;
+      return key == null ? Object.keys(p).length > 0 : p[key] !== undefined;
+    },
 
     /* ---- session ---- */
     login: function (who) { return Settings.set({ session: who }); },
     logout: function () { return Settings.set({ session: null }); },
     who: function () { return Settings.get().session; }
   };
+
+  Settings.POLICY_KEYS = POLICY_KEYS;
 
   RQ.store = Store;
   RQ.settings = Settings;

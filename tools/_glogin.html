@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Google 登入／綁定 UI 測試</title>
+<link rel="stylesheet" href="../assets/css/app.css">
+</head>
+<body>
+
+<!-- ===== 先把所有網路呼叫擋掉：完全離線、不可能寫到老師的真資料 =====
+     務必放在 app 腳本之前，否則 boot() 會先去讀真的 data/config.json。 -->
+<script>
+(function () {
+  var FAKE_CONFIG = {
+    site: '閱讀理解練習站', version: 1,
+    firebase: {
+      dbUrl: 'https://fake.firebaseio.com', apiKey: 'AIzaFAKEKEY',
+      classCode: 'default', authDomain: 'fake.firebaseapp.com'
+    },
+    classCode: 'chi2a',
+    /* 註冊頁要出現，必須有自助註冊（allowSelfRegister）或收集端網址。
+       這裡刻意開 true，測試才有辦法走到註冊頁的 Google 入口。 */
+    policy: { assignOnly: true, showAnswerAfterSubmit: true, allowRetake: false,
+              enableHighlight: true, allowSelfRegister: true }
+  };
+  var FAKE_ROSTER = [
+    { id: 'stu_1', username: 'waiwai', name: '歪歪', className: '2A', pass: 's:h' },
+    { id: 'stu_2', username: 'edward', name: '溫德華', className: '2A', pass: 's:h' },
+    { id: 'stu_3', username: 'ava', name: 'Ava', className: '2B', pass: 's:h',
+      googleUid: 'uid-bound', email: 'ava@example.com' }
+  ];
+  function json(body) {
+    return Promise.resolve(new Response(JSON.stringify(body), {
+      status: 200, headers: { 'Content-Type': 'application/json' }
+    }));
+  }
+  var orig = window.fetch;
+  window.fetch = function (url, init) {
+    var u = String(url);
+    if (/config\.json/.test(u)) return json(FAKE_CONFIG);
+    if (/roster\.json/.test(u)) return json(FAKE_ROSTER);
+    if (/identitytoolkit/.test(u)) return json({ idToken: 'tok', expiresIn: '3600' });
+    if (/firebaseio/.test(u)) return json(null);          /* 雲端一律當作沒有資料 */
+    if (/api\.github\.com/.test(u)) return json({ content: '', sha: 'sha' });
+    return orig.apply(this, arguments);
+  };
+})();
+</script>
+
+<div id="app">
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#/"><span class="brand-text"><b>閱讀理解練習站</b></span></a>
+      <nav class="nav" id="nav">
+        <a href="#/" class="nav-link" data-route="home">首頁</a>
+        <a href="#/student" class="nav-link" data-route="student">學生專區</a>
+        <a href="#/teacher" class="nav-link" data-route="teacher">老師專區</a>
+        <a href="#/settings" class="nav-link" data-route="settings">設定</a>
+      </nav>
+      <div class="who" id="who"></div>
+    </div>
+  </header>
+  <main id="view" class="view"></main>
+</div>
+<div id="toast-root" class="toast-root"></div>
+<div id="modal-root"></div>
+
+<script src="../assets/js/lib/jszip.min.js"></script>
+<script src="../assets/js/lib/pdf.min.js"></script>
+<script src="../assets/js/core/util.js"></script>
+<script src="../assets/js/core/crypto.js"></script>
+<script src="../assets/js/core/store.js"></script>
+<script src="../assets/js/core/backend.js"></script>
+<script src="../assets/js/core/docx-parser.js"></script>
+<script src="../assets/js/core/pdf-parser.js"></script>
+<script src="../assets/js/ui/highlighter.js"></script>
+<script src="../assets/js/teacher.js"></script>
+<script src="../assets/js/student.js"></script>
+<script src="../assets/js/app.js"></script>
+
+<script>
+(function () {
+  var pass = 0, fail = 0, lines = [];
+  function ok(label, cond, extra) {
+    if (cond) { pass++; lines.push('PASS  ' + label); }
+    else { fail++; lines.push('FAIL  ' + label + (extra ? '  :: ' + extra : '')); }
+  }
+  function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  function btnWith(t) {
+    return $$('button').filter(function (b) { return b.textContent.indexOf(t) >= 0; })[0] || null;
+  }
+  function inpWith(ph) {
+    return $$('input').filter(function (i) { return i.placeholder === ph; })[0] || null;
+  }
+  /* 導覽列右側的 #who 是未登入時的另一個入口（手機版導覽列會橫向滑動，
+     「學生專區」可能被推到畫面外，所以這一顆要單獨測）。 */
+  function whoBtn(t) {
+    var host = document.getElementById('who');
+    if (!host) return null;
+    return $$('button', host).filter(function (b) {
+      return b.textContent.indexOf(t) >= 0;
+    })[0] || null;
+  }
+  function whoLink(t) {
+    var host = document.getElementById('who');
+    if (!host) return null;
+    return $$('a', host).filter(function (a) {
+      return a.textContent.indexOf(t) >= 0;
+    })[0] || null;
+  }
+  function viewText() { return document.getElementById('view').textContent; }
+  function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  /* 一律「輪詢到狀態出現」而不是固定 sleep：headless 底下每一步的實際耗時
+     不穩定，固定等待會讓測試時好時壞（且看起來像程式 bug）。 */
+  async function until(fn, ms, label) {
+    var t = Date.now();
+    while (Date.now() - t < (ms || 4000)) {
+      try { if (fn()) return true; } catch (e) { }
+      await wait(80);
+    }
+    if (label) lines.push('  (逾時等不到：' + label + ')');
+    return false;
+  }
+  function typeIn(input, value) {
+    input.value = value;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  var fakeProfile = null, reported = false;
+
+  /* 任何未捕捉的錯誤都要留下痕跡，否則 headless 只會看到「沒有結果」 */
+  function reportFatal(msg) {
+    if (reported) return;
+    reported = true;
+    flush('FATAL ' + msg);
+  }
+  window.addEventListener('error', function (e) {
+    reportFatal('error: ' + (e.message || e.error));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason;
+    reportFatal('rejection: ' + ((r && (r.stack || r.message)) || r));
+  });
+  function flush(extra) {
+    if (document.getElementById('rqtest')) return;
+    var pre = document.createElement('pre');
+    pre.id = 'rqtest';
+    pre.textContent = lines.join('\n') +
+      (extra ? '\n' + extra : '') +
+      '\nSUMMARY: ' + pass + ' pass / ' + fail + ' fail';
+    document.body.appendChild(pre);
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    setTimeout(function () {
+      run().catch(function (e) { reportFatal('run(): ' + (e && (e.stack || e.message))); });
+    }, 60);
+  });
+
+  async function run() {
+    /* 把「會寫入資料」的路徑全部換成 no-op：這個測試只驗 UI 與身分，
+       寫入邏輯已由 tools/_test_google_bind.js 覆蓋。
+       同時偽造 Google 登入結果，避免載入真的 SDK 或連到 Google。 */
+    var B = window.RQ.backend, S = window.RQ.settings, G = window.RQ.googleAuth;
+    /* 後面幾段會把 G.signIn 換成假的（避免載入真的 SDK／連到 Google），
+       但要測「失敗處理」時必須用回真的那一個，所以先留一份。 */
+    var realSignIn = G.signIn;
+    B.saveStudent = function (s) { return Promise.resolve(s); };
+    B.syncRoster = function () { return Promise.resolve({ count: 0, channels: 2, errors: [] }); };
+    window.RQ.crypto.verifyPassword = function () { return Promise.resolve(true); };
+    G.signIn = function () { return Promise.resolve(fakeProfile); };
+
+    /* ---------- ① 登入頁應該出現 Google 按鈕 ---------- */
+    await wait(350);                    /* 等 boot() → loadConfig() 跑完 */
+    location.hash = '#/student';
+    window.RQ.route();
+    await until(function () { return !!btnWith('使用 Google 登入'); }, 4000, '登入頁');
+
+    ok('公開設定把 authDomain 補進來後，Google 登入視為可用', G.available() === true,
+      JSON.stringify(S.get().fb));
+    ok('公開設定把班級代碼補進來（綁定頁要當門檻用）', S.get().classCode === 'chi2a',
+      JSON.stringify(S.get().classCode));
+    ok('學生登入頁出現「使用 Google 登入」按鈕', !!btnWith('使用 Google 登入'));
+    ok('登入頁仍保留帳號密碼登入（Google 是新增，不是取代）',
+      !!inpWith('使用者帳號') && !!inpWith('密碼'));
+    ok('一開始沒有登入身分', !S.who());
+
+    /* ---------- ② 未綁定 → 綁定頁 ---------- */
+    /* 暖機：headless 第一次開 IndexedDB 明顯較慢，若不先跑一次 getRoster()，
+       下面的按鈕點擊會點在「名冊還沒讀完」的空窗上（不是程式的問題）。 */
+    var warm = await B.getRoster();
+    ok('名冊三通道合併讀得到學生', warm.length === 3, 'length=' + warm.length);
+
+    fakeProfile = { uid: 'uid-new', email: 'new@gmail.com', name: 'New' };
+    btnWith('使用 Google 登入').click();
+    await until(function () { return viewText().indexOf('綁定你的帳號') >= 0; }, 5000, '綁定頁');
+    var diag = 'view=' + JSON.stringify(viewText().slice(0, 120)) +
+      ' toast=' + JSON.stringify((document.getElementById('toast-root') || {}).textContent || '');
+    ok('未綁定的 Google 帳號會被帶到綁定頁', viewText().indexOf('綁定你的帳號') >= 0, diag);
+    ok('綁定頁提供兩種入口', !!btnWith('① 用老師給的帳密') && !!btnWith('② 從名單選自己'));
+
+    /* ---------- ③ 從名單選自己（班級代碼門檻） ---------- */
+    btnWith('② 從名單選自己').click();
+    const HINT = '輸入班級代碼後會顯示可選的名單';
+    var code = await until(function () { return inpWith('向老師索取'); }, 4000, '班級代碼欄位')
+      ? inpWith('向老師索取') : null;
+    ok('選單模式要求輸入班級代碼', !!code);
+    ok('代碼未輸入時不顯示名單', !btnWith('歪歪'));
+
+    typeIn(code, 'wrong');
+    await until(function () { return viewText().indexOf(HINT) >= 0; }, 3000, '代碼錯誤提示');
+    ok('代碼錯誤時仍然不顯示名單', !btnWith('歪歪'));
+
+    typeIn(code, 'chi2a');
+    await until(function () { return !!btnWith('歪歪'); }, 5000, '名單');
+    ok('代碼正確時列出名冊成員', !!btnWith('歪歪') && !!btnWith('溫德華') && !!btnWith('Ava'));
+    var avaBtn = btnWith('Ava');
+    ok('已被其他 Google 帳號綁定的學生不能選', !!avaBtn && avaBtn.disabled === true);
+    ok('未綁定的學生可以選', !!btnWith('歪歪') && btnWith('歪歪').disabled === false);
+
+    btnWith('歪歪').click();
+    await until(function () { return !!btnWith('確定'); }, 3000, '確認視窗');
+    ok('選人後跳出確認視窗', !!btnWith('確定'));
+    btnWith('確定').click();
+    await until(function () { return !!S.who(); }, 5000, '登入身分寫入 session');
+
+    var who = S.who();
+    ok('登入後身分是名冊的 id（stu_1），不是 Google UID',
+      !!who && who.id === 'stu_1' && who.id !== 'uid-new', JSON.stringify(who));
+    ok('session 記下登入方式為 google', !!who && who.method === 'google');
+    ok('session 帶著班別（指派作業要用）', !!who && who.className === '2A');
+    ok('登入後進入學生首頁', viewText().indexOf('哈囉') >= 0);
+
+    /* ---------- ④ 已綁定的帳號 → 直接登入 ---------- */
+    S.logout();
+    location.hash = '#/student';
+    window.RQ.route();
+    await until(function () { return !!btnWith('使用 Google 登入'); }, 4000, '登入頁');
+    fakeProfile = { uid: 'uid-bound', email: 'ava@example.com', name: 'Ava' };
+    btnWith('使用 Google 登入').click();
+    await until(function () { return !!S.who(); }, 5000, '已綁定帳號直接登入');
+    var who2 = S.who();
+    ok('已綁定的 Google 帳號直接登入，不再要求綁定',
+      !!who2 && who2.id === 'stu_3', JSON.stringify(who2));
+    ok('直接登入時不會誤停在綁定頁', viewText().indexOf('綁定你的帳號') < 0);
+
+    /* ---------- ⑤ 用老師給的帳密綁定 ---------- */
+    S.logout();
+    location.hash = '#/student';
+    window.RQ.route();
+    await until(function () { return !!btnWith('使用 Google 登入'); }, 4000, '登入頁');
+    fakeProfile = { uid: 'uid-other', email: 'other@gmail.com', name: 'Other' };
+    btnWith('使用 Google 登入').click();
+    await until(function () { return !!inpWith('老師給你的帳號'); }, 5000, '綁定頁帳密欄位');
+    var un = inpWith('老師給你的帳號');
+    var pw = inpWith('密碼');
+    ok('① 入口有帳號與密碼欄位', !!un && !!pw);
+    typeIn(un, 'waiwai');
+    typeIn(pw, 'secret');
+    btnWith('綁定並開始使用').click();
+    await until(function () { return !!S.who(); }, 5000, '帳密綁定完成');
+    var who3 = S.who();
+    ok('用帳密綁定後，身分同樣是名冊的 stu_1', !!who3 && who3.id === 'stu_1',
+      JSON.stringify(who3));
+
+    /* ---------- ⑥ 登出會清掉身分 ---------- */
+    var out = await until(function () { return !!btnWith('登出'); }, 3000, '登出按鈕')
+      ? btnWith('登出') : null;
+    ok('右上角有登出按鈕', !!out);
+    if (out) out.click();
+    await until(function () { return !S.who(); }, 3000, '登出');
+    ok('登出後不再有登入身分', !S.who());
+
+    /* ---------- ⑦ 導覽列入口（共用平板唯一到得了的地方） ---------- */
+    /* 未登入時，導覽列右側的 #who 就是登入入口。手機版導覽列會橫向滑動，
+       「學生專區」可能被推到畫面外，所以這一顆是必要的。 */
+    location.hash = '#/';
+    window.RQ.route();
+    await until(function () { return !!whoBtn('使用 Google 登入'); }, 4000, '導覽列 Google 按鈕');
+    ok('首頁導覽列出現「使用 Google 登入」', !!whoBtn('使用 Google 登入'));
+    ok('導覽列同時保留學生／老師登入連結',
+      !!whoLink('學生登入') && !!whoLink('老師登入'));
+    ok('路徑不正確時，導覽列不會多出按不動的按鈕',
+      !!(window.RQ.googleAuth && window.RQ.googleAuth.available()));
+
+    /* 從導覽列登入 → 完成後要回到「原本造訪的頁面」，而不是被丟到學生首頁 */
+    S.logout();
+    location.hash = '#/settings';
+    window.RQ.route();
+    await wait(60);
+    fakeProfile = { uid: 'uid-bound', email: 'ava@example.com', name: 'Ava' };
+    var navG = whoBtn('使用 Google 登入');
+    ok('在非學生頁也能從導覽列登入', !!navG);
+    if (navG) navG.click();
+    await until(function () { return !!S.who(); }, 5000, '導覽列登入完成');
+    ok('導覽列登入後身分正確（stu_3）', !!S.who() && S.who().id === 'stu_3',
+      JSON.stringify(S.who()));
+    await until(function () { return location.hash === '#/settings'; }, 4000, '導回原頁');
+    ok('登入後導回原本造訪的頁面（#/settings），而不是學生首頁',
+      location.hash === '#/settings', location.hash);
+
+    /* 從「學生專區」登入時不該記住返回點（本來就在學生頁，導回原頁會鬼打牆） */
+    S.logout();
+    location.hash = '#/student';
+    window.RQ.route();
+    await wait(60);
+    var navG2 = whoBtn('使用 Google 登入');
+    if (navG2) navG2.click();
+    await until(function () { return !!S.who(); }, 5000, '學生頁登入完成');
+    ok('從學生專區登入不會卡在登入頁', viewText().indexOf('哈囉') >= 0);
+
+    /* ---------- ⑧ 註冊頁的 Google 入口 ---------- */
+    S.logout();
+    /* 先離開再回來：登出前停在學生首頁，hash 沒變就不會觸發 hashchange，
+       而且上一段可能還有 in-flight 的 route() 會把畫面蓋回去，
+       所以「換到別頁 → 等一拍 → 回到學生頁 → 輪詢等登入頁出現」。 */
+    location.hash = '#/';
+    window.RQ.route();
+    await wait(120);
+    location.hash = '#/student';
+    window.RQ.route();
+    var gotLogin = await until(function () { return !!btnWith('第一次使用・註冊'); }, 6000, '登入頁（回註冊）');
+    if (!gotLogin) {
+      /* 再試一次：headless 底下偶爾會撞上上一段尚未結束的渲染 */
+      location.hash = '#/';
+      window.RQ.route();
+      await wait(120);
+      location.hash = '#/student';
+      window.RQ.route();
+      gotLogin = await until(function () { return !!btnWith('第一次使用・註冊'); }, 6000, '登入頁（第二次）');
+    }
+    var toReg = btnWith('第一次使用・註冊');
+    ok('回到學生登入頁', !!toReg, JSON.stringify(viewText().slice(0, 100)));
+    if (toReg) toReg.click();
+    await until(function () { return viewText().indexOf('註冊帳號') >= 0; }, 4000, '註冊頁');
+    ok('註冊頁可開啟', viewText().indexOf('註冊帳號') >= 0);
+    ok('註冊頁出現 Google 登入／註冊按鈕',
+      !!btnWith('使用 Google 帳號登入／註冊'), btnWith('使用 Google 登入') ? '(仍是登入版文案)' : '');
+    ok('註冊頁有 Google 電子郵件欄位（同一 Email = 同一位使用者）',
+      !!inpWith('你的 Google 電子郵件'));
+    ok('註冊頁保留原本的帳號密碼註冊',
+      !!inpWith('英文或數字，例如 ming123') && !!inpWith('至少 4 個字'));
+    ok('註冊頁有說明「填了之後可直接用 Google 進站」',
+      viewText().indexOf('就會直接進站') >= 0);
+
+    /* 在註冊頁填好 email 後按 Google → 直接用那個 email 認出身分，不再要求綁定 */
+    S.logout();
+    var regMail = inpWith('你的 Google 電子郵件');
+    if (regMail) typeIn(regMail, 'ava@example.com');
+    fakeProfile = { uid: 'uid-bound', email: 'ava@example.com', name: 'Ava' };
+    var regG = btnWith('使用 Google 帳號登入／註冊');
+    if (regG) regG.click();
+    await until(function () { return !!S.who(); }, 6000, '註冊頁 Google 登入');
+    ok('註冊頁按 Google 後直接登入', !!S.who(), JSON.stringify(S.who()));
+    ok('身分仍是名冊的 stu_3（不是新帳號、也不是 Google UID）',
+      !!S.who() && S.who().id === 'stu_3', JSON.stringify(S.who()));
+
+    /* ---------- ⑨ 使用者取消授權 ---------- */
+    S.logout();
+    location.hash = '#/';
+    window.RQ.route();
+    await wait(80);
+    location.hash = '#/student';
+    window.RQ.route();
+    await until(function () { return !!btnWith('使用 Google 登入'); }, 5000, '登入頁（回取消測試）');
+    /* 模擬「使用者在 Google 視窗按了取消」：SDK 回 null/profile 為空 */
+    G.signIn = function () { return Promise.resolve(null); };
+    fakeProfile = null;
+    var gForCancel = btnWith('使用 Google 登入');
+    ok('取消測試前先取得登入按鈕', !!gForCancel);
+    if (gForCancel) gForCancel.click();
+    await wait(600);
+    ok('取消授權不會產生登入身分', !S.who());
+    ok('取消後仍停在登入頁（不會被踢到別的頁面）', viewText().indexOf('使用 Google 登入') >= 0);
+    var cancelToast = (document.getElementById('toast-root') || {}).textContent || '';
+    ok('取消後給出中性提示（不當成錯誤）',
+      /取消|略過|沒有完成|已取消/.test(cancelToast) || cancelToast === '', JSON.stringify(cancelToast));
+
+    /* 失敗 → 重新整理後應看得到一次說明（否則使用者不知道剛剛發生什麼事）
+       注意：這裡**不能**直接把 G.signIn 換掉 —— lastError 是「真的 signIn」
+       在 catch 裡寫的，換掉之後就測不到「失敗有沒有被記下來」。
+       改成讓底層 SDK 拒絕，走真正的錯誤處理路徑。 */
+    G.signIn = realSignIn;
+    window.firebase = {
+      auth: function () {
+        return {
+          signInWithPopup: function () {
+            return Promise.reject(Object.assign(new Error('popup closed by user'),
+              { code: 'auth/popup-closed-by-user' }));
+          }
+        };
+      },
+      initializeApp: function () { return {}; }
+    };
+    window.firebase.auth.GoogleAuthProvider = function () {
+      this.setCustomParameters = function () { };
+    };
+    /* 讓 _init() 直接回傳假 auth，不去載真的 SDK */
+    G._init = function () { return Promise.resolve(window.firebase.auth()); };
+    G._coarse = function () { return false; };
+    var gbtnFail = btnWith('使用 Google 登入');
+    ok('失敗測試前先取得登入按鈕', !!gbtnFail);
+    if (gbtnFail) gbtnFail.click();
+    await until(function () { return !!G.lastError; }, 4000, 'lastError 寫入');
+    ok('授權失敗不會留下半殘的登入狀態', !S.who());
+    ok('使用者取消會被辨識為取消（而不是故障），並記在 lastError',
+      !!G.lastError && G.lastError.code === 'rq/local-cancel',
+      JSON.stringify(G.lastError));
+    ok('取消的說明文字是中性的（不嚇使用者）',
+      !!G.lastError && !/錯誤|失敗|異常/.test(G.lastError.text), String(G.lastError && G.lastError.text));
+    /* 下一次開啟登入頁時，應該把這個原因顯示一次 */
+    location.hash = '#/';
+    window.RQ.route();
+    await wait(80);
+    location.hash = '#/student';
+    window.RQ.route();
+    await until(function () { return viewText().indexOf('使用 Google 登入') >= 0; }, 5000, '登入頁（看提示）');
+    ok('重新開啟登入頁時會說明上一次的結果',
+      /取消|沒有完成|略過/.test(viewText()), JSON.stringify(viewText().slice(0, 200)));
+    ok('提示只顯示一次（不會一直卡在畫面上）', !G.lastError, JSON.stringify(G.lastError));
+
+    /* ---------- ⑩ 沒有 authDomain 時整條入口消失 ---------- */
+    ok('authDomain 缺席時 available() 為 false', (function () {
+      var fb = S.get().fb;
+      S.set({ fb: { enabled: true, dbUrl: fb.dbUrl, apiKey: fb.apiKey, classCode: fb.classCode, authDomain: '' } });
+      var avail = G.available();
+      S.set({ fb: { authDomain: 'fake.firebaseapp.com' } });
+      return avail === false;
+    })(), JSON.stringify(S.get().fb));
+
+    flush();
+  }
+})();
+</script>
+</body>
+</html>

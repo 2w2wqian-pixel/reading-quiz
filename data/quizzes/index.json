@@ -134,20 +134,5 @@
       "assignedAt": "2026-09-20T11:30:07.651Z"
     },
     "_src": "published"
-  },
-  {
-    "id": "2020-dse-中國語文-卷一-香港考試及評核局-2020年香港中學文憑考試-pjrc",
-    "title": "2020 DSE中文",
-    "level": "",
-    "source": "deepseek_markdown_20260922_6a928d.md",
-    "subject": "",
-    "format": "markdown",
-    "questionCount": 22,
-    "totalMarks": 65,
-    "passageCount": 2,
-    "createdAt": "2026-09-22T14:54:55.560Z",
-    "published": true,
-    "assignment": null,
-    "_src": "published"
   }
 ]

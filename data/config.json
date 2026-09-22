@@ -19,13 +19,12 @@
     "postUrl": "https://script.google.com/macros/s/AKfycbzAZmyvepOIXmxdSJnbW6V_S7uLzK76jaIJ3EQQLCQ8b68Z1CeQ0yFEIHos1ypHE3I/exec"
   },
   "classCodeIsNamespace": false,
-  "updatedAt": "2026-09-22T14:56:48.162Z",
+  "updatedAt": "2026-09-18T23:53:30",
   "policy": {
     "assignOnly": true,
     "showAnswerAfterSubmit": true,
-    "allowRetake": true,
+    "allowRetake": false,
     "enableHighlight": true,
-    "allowSelfRegister": true
-  },
-  "classCode": ""
+    "allowSelfRegister": false
+  }
 }

@@ -433,6 +433,34 @@
       ])
     ]));
 
+    /* AI 選項：解析完直接請 AI 體檢／補答案，不必再進編輯頁按一次。
+       只有在真的設定好 AI 時才顯示，否則老師勾了也送不出去。 */
+    var aiReady = !!(RQ.ai && RQ.ai.isReady());
+    var aiChk = U.el('input', { type: 'checkbox' });
+    var aiTaskSel = U.el('select.input', { style: { maxWidth: '330px', flex: '0 0 auto' } });
+    if (aiReady) {
+      Object.keys(RQ.ai.TASKS).forEach(function (k) {
+        aiTaskSel.appendChild(U.el('option', { value: k, text: RQ.ai.TASKS[k].label }));
+      });
+      aiTaskSel.value = 'review';
+      card.appendChild(U.el('div.infobox.mt2', {}, [
+        U.el('label.check', { style: { display: 'flex' } }, [
+          aiChk,
+          U.el('span', {
+            html: '<b>解析後直接請 AI 分析</b>（不用再進編輯頁）——' +
+              '會在解析完成的卡片上多一顆「🤖 AI 分析」按鈕，按了就會送出。'
+          })
+        ]),
+        U.el('div.row.mt1', {}, [
+          U.el('label.tiny.muted', { text: '分析任務：' }), aiTaskSel
+        ])
+      ]));
+    } else if (RQ.ai) {
+      card.appendChild(U.el('div.tiny.faint.mt2', {
+        html: '💡 想在上傳後直接讓 AI 幫忙校對、補答案？請先到「設定 → <b>⑤ AI 助理</b>」填好金鑰並啟用。'
+      }));
+    }
+
     /* 學生卷 */
     var dropS = dropZone('學生卷（題目卷）', function (f) {
       opt.studentFile = f;
@@ -464,6 +492,7 @@
         text: '開始解析', onclick: function () {
           if (!opt.studentFile) { U.toast('請先選擇學生卷', 'bad'); return; }
           opt.autoPublish = false;
+          opt.aiTask = (aiReady && aiChk.checked) ? aiTaskSel.value : null;
           runParse(view, opt);
         }
       }),
@@ -471,6 +500,7 @@
         text: '解析並發佈', onclick: function () {
           if (!opt.studentFile) { U.toast('請先選擇學生卷', 'bad'); return; }
           opt.autoPublish = true;
+          opt.aiTask = (aiReady && aiChk.checked) ? aiTaskSel.value : null;
           runParse(view, opt);
         }
       })
@@ -600,6 +630,44 @@
     return z;
   }
 
+  /**
+   * 解析完成後、還沒跳去編輯頁之前的「中繼卡」。
+   * 為什麼要這張卡：老師在上傳頁勾了「解析後直接請 AI 分析」，
+   * 但 AI 分析是非同步的、而且要人工看過才套用，所以不能直接續跳編輯頁——
+   * 先在原地給一顆「🤖 AI 分析」按鈕，按了才開對話框；不想用就按「先去編輯頁」。
+   */
+  function showParseDoneCard(card, view, quiz, res, extra, task, published) {
+    card.innerHTML = '';
+    var goEdit = U.el('button.btn', {
+      text: '先去編輯頁看看 →',
+      onclick: function () { location.hash = '#/edit/' + quiz.id; }
+    });
+    var aiBtn = U.el('button.btn.primary', { text: '🤖 AI 分析' });
+    aiBtn.addEventListener('click', function () {
+      /* 靜默存一次，確保 AI 看到的是磁碟上的最新內容（改名、補答案都在這之後才發生） */
+      aiDialog(quiz, {
+        task: task,
+        save: function (next) {
+          next.updatedAt = U.nowISO();
+          return Store.quiz.save(next);
+        },
+        onDone: function () { location.hash = '#/edit/' + quiz.id; }
+      });
+    });
+
+    card.appendChild(U.el('div.big.mb1', { text: published ? '✅ 解析完成並已發佈' : '✅ 解析完成' }));
+    card.appendChild(U.el('div.tiny.muted', {
+      text: res.questions.length + ' 題' +
+        (res.mode === 'image' ? '' : '／' + res.passages.length + ' 篇文章') + extra +
+        (published ? '　學生重新載入頁面即可看到' : '　（已存為草稿，尚未發佈）')
+    }));
+    card.appendChild(U.el('div.infobox.mt2', {
+      html: '你剛才勾了「解析後直接請 AI 分析」。按下面的按鈕就會把這份試卷送給模型體檢／補答案，' +
+        '<b>回覆會先顯示、你按「套用」才會寫回去</b>。'
+    }));
+    card.appendChild(U.el('div.row.mt2', {}, [aiBtn, goEdit]));
+  }
+
   function runParse(view, opt) {
     var sname = (opt.studentFile && (opt.studentFile.name || '')) || '';
     var isPdf = /\.pdf$/i.test(sname);
@@ -681,11 +749,23 @@
           U.toast('解析完成：' + res.questions.length + ' 題' +
             (res.mode === 'image' ? '' : '／' + res.passages.length + ' 篇文章') + extra +
             '（已存為草稿，請按「發佈」）', 'ok', 4500);
+
+          /* 老師在上傳頁勾了「解析後直接請 AI 分析」→ 先在原地給一顆按鈕，
+             按下去就開 AI 對話框，不必先進編輯頁。（opt.aiTask 由按鈕帶進來） */
+          if (opt.aiTask && RQ.ai) {
+            showParseDoneCard(card, view, quiz, res, extra, opt.aiTask);
+            return null;
+          }
           location.hash = '#/edit/' + quiz.id;
           return null;
         }
         return Backend.publishQuiz(quiz).then(function () {
           U.toast('解析完成並已發佈！學生重新載入即可看到', 'ok', 4500);
+
+          if (opt.aiTask && RQ.ai) {
+            showParseDoneCard(card, view, quiz, res, extra, opt.aiTask, true);
+            return null;
+          }
           location.hash = '#/edit/' + quiz.id;
         }).catch(function (e) {
           U.toast('已解析但發佈失敗：' + ((e && e.message) || '') + '（可到編輯頁手動發佈）', 'bad', 6000);
@@ -903,170 +983,19 @@
     }
 
     /**
-     * AI 分析對話框。
-     * 流程：選任務 → 送出 → 顯示回覆 → 若回覆裡有 JSON Patch，提供「套用」。
-     * 刻意不自動儲存：AI 會出錯，一律讓老師看過才寫回試卷。
+     * AI 分析對話框（編輯頁版本）。
+     * 實作在模組層級的 aiDialog／previewAiPatches（上傳頁共用同一份），
+     * 這裡只負責把「套用後存檔」接上去 —— 編輯頁要真的寫進 store。
      */
     function openAiDialog(qz, onDone) {
       (qz.questions || []).forEach(syncAnswerKeys);
       qz.title = U.trim(tInp.value) || qz.title;
-
-      var out = U.el('div.ai-out', {
-        style: {
-          maxHeight: '340px', overflow: 'auto', whiteSpace: 'pre-wrap',
-          background: '#F7F3EB', border: '1px solid var(--line)', borderRadius: '12px',
-          padding: '12px 14px', fontSize: '13.5px', lineHeight: '1.75', display: 'none'
-        }
-      });
-      var qInp = U.el('textarea.input', {
-        rows: '3',
-        placeholder: '（選「自由提問」時填這裡，例如：這份試卷的難度適合小五嗎？第 3 篇的題目有沒有超出範圍？）'
-      });
-      var taskSel = U.el('select.input');
-      var missing = (qz.questions || []).filter(function (q) {
-        return !(q.answer || (q.answerKeys || []).length);
-      });
-      Object.keys(RQ.ai.TASKS).forEach(function (k) {
-        var label = RQ.ai.TASKS[k].label;
-        if (k === 'review') label += '（目前有 ' + missing.length + ' 題缺答案）';
-        taskSel.appendChild(U.el('option', { value: k, text: label }));
-      });
-      taskSel.value = missing.length ? 'review' : 'explain';
-
-      var applyBar = U.el('div.row.mt2');
-      applyBar.style.display = 'none';
-
-      var box = U.el('div', {}, [
-        U.el('div.tiny.muted', {
-          html: '會把這份試卷的<b>濃縮版 JSON</b>（文章截短、題目精簡）送到你設定的模型。' +
-            '<b>送出不代表套用</b>——回覆會先顯示在下面，你按「套用」才會寫回試卷。'
-        }),
-        U.el('div.mt2', {}, [U.el('label.tiny.muted', { text: '要做什麼' }), taskSel]),
-        U.el('div.mt1', {}, [U.el('label.tiny.muted', { text: '補充說明（選填）' }), qInp]),
-        out,
-        applyBar
-      ]);
-
-      var lastPatches = null;
-      var lastTask = null;
-
-      var btnRun = U.el('button.btn.primary', { text: '送出給 AI' });
-      var btnCopy = U.el('button.btn.sm', {
-        text: '複製回覆', onclick: function () {
-          var t = out.getAttribute('data-raw') || out.textContent;
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(t).then(function () { U.toast('已複製', 'ok'); })
-              .catch(function () { U.download('ai-' + U.slug(qz.title) + '.txt', t); });
-          } else U.download('ai-' + U.slug(qz.title) + '.txt', t);
-        }
-      });
-      btnCopy.style.display = 'none';
-
-      btnRun.addEventListener('click', function () {
-        lastTask = taskSel.value;
-        lastPatches = null;
-        applyBar.innerHTML = ''; applyBar.style.display = 'none';
-        out.style.display = '';
-        out.textContent = '思考中…（依模型與題數不同，通常 5–40 秒）';
-        btnRun.disabled = true;
-        RQ.ai.run(lastTask, qz, { question: U.trim(qInp.value) }).then(function (res) {
-          btnRun.disabled = false;
-          btnCopy.style.display = '';
-          out.setAttribute('data-raw', res.text);
-          out.textContent = res.text;
-          var usage = res.usage && (res.usage.total_tokens || res.usage.totalTokenCount);
-          if (usage) out.textContent += '\n\n— 用了 ' + usage + ' tokens（模型 ' + (res.model || '') + '）';
-
-          /* 若回覆含 JSON Patch → 給「套用」按鈕 */
-          var patches = RQ.ai.extractJSON(res.text);
-          if (patches && patches.length) {
-            var dry = RQ.ai.applyPatches(qz, patches);
-            lastPatches = patches;
-            applyBar.innerHTML = '';
-            applyBar.appendChild(U.el('span.tiny', {
-              html: '偵測到 <b>' + patches.length + '</b> 筆修正建議，可套用 <b>' + dry.applied + '</b> 筆' +
-                (dry.skipped ? '（' + dry.skipped + ' 筆略過）' : '')
-            }));
-            applyBar.appendChild(U.el('button.btn.sm.sun', {
-              text: '預覽並套用修正', onclick: function () {
-                previewPatches(qz, lastPatches, lastTask, function () {
-                  if (onDone) onDone();
-                });
-              }
-            }));
-            applyBar.style.display = '';
-          }
-        }).catch(function (e) {
-          btnRun.disabled = false;
-          out.textContent = '❌ ' + ((e && e.message) || e) +
-            '\n\n請到「設定 → ⑤ AI 助理」檢查通道與金鑰，或按「儲存並測試連線」。';
-        });
-      });
-
-      U.modal({
-        title: '🤖 AI 分析：' + (qz.title || ''),
-        width: 820,
-        body: box,
-        actions: [btnRun, btnCopy, { label: '關閉' }]
-      });
-    }
-
-    /** 套用前的逐題預覽（差異表） */
-    function previewPatches(qz, patches, task, done) {
-      var res = RQ.ai.applyPatches(qz, patches);
-      var applied = res.detail.filter(function (d) { return d.fields; });
-      var rows = applied.map(function (d) {
-        var before = (qz.questions || []).filter(function (x) { return x.no === d.no; })[0] || {};
-        var after = res.questions.filter(function (x) { return x.no === d.no; })[0] || {};
-        function cell(k) {
-          var b = String(before[k] || '').slice(0, 90);
-          var a = String(after[k] || '').slice(0, 90);
-          if (b === a) return '<td class="tiny muted">（不變）</td>';
-          return '<td class="tiny"><s class="muted">' + U.esc(b || '（空）') + '</s><br>→ ' + U.esc(a) + '</td>';
-        }
-        return '<tr><td>' + U.esc(d.no) + '</td><td class="tiny">' + U.esc(d.fields.join('、')) + '</td>' +
-          cell('answer') + cell('explanation') + '</tr>';
-      }).join('');
-
-      var t = U.el('table.tbl');
-      t.innerHTML = '<thead><tr><th>題號</th><th>欄位</th><th>答案</th><th>解析</th></tr></thead><tbody>' +
-        (rows || '<tr><td colspan="4" class="tiny muted">沒有任何可套用的修正</td></tr>') + '</tbody>';
-
-      var missed = res.detail.filter(function (d) { return d.why; });
-      var box = U.el('div', {}, [
-        U.el('div.tiny.muted', {
-          html: '這是套用後的結果預覽（尚未儲存）。套用後仍可再手動編輯，或按「儲存」後再「發佈到 GitHub」。'
-        }),
-        U.el('div.tbl-wrap.mt2', {}, [t])
-      ]);
-      if (missed.length) {
-        box.appendChild(U.el('div.warnbox.mt2', {
-          html: '有 ' + missed.length + ' 筆找不到對應題號（' +
-            missed.map(function (m) { return U.esc(m.no); }).join('、') + '），已略過。'
-        }));
-      }
-      box.appendChild(U.el('div.tiny.faint.mt2', {
-        html: '提醒：AI 產生的答案<b>不是標準答案</b>。請確認過再發佈給學生。'
-      }));
-
-      U.modal({
-        title: '套用 AI 修正',
-        width: 900,
-        body: box,
-        actions: [
-          {
-            label: '確定套用', kind: 'primary', onClick: function () {
-              qz.questions = res.questions;
-              qz.totalMarks = qz.questions.reduce(function (a, q) { return a + (parseFloat(q.marks) || 0); }, 0);
-              (qz.questions || []).forEach(syncAnswerKeys);
-              Store.quiz.save(qz).then(function () {
-                U.toast('已套用 ' + res.applied + ' 筆修正並儲存', 'ok', 3600);
-                if (done) done();
-              });
-            }
-          },
-          { label: '取消' }
-        ]
+      aiDialog(qz, {
+        save: function (next) {
+          next.updatedAt = U.nowISO();
+          return Store.quiz.save(next);
+        },
+        onDone: onDone
       });
     }
 
@@ -1129,6 +1058,187 @@
       });
     }
   }
+
+
+  /* ============================================================
+     AI 分析對話框（共用）
+     ------------------------------------------------------------
+     編輯頁與上傳頁都要用，所以放在模組層級。
+     差異只在「套用後要怎麼存」→ 由 opt.save(newQuiz) 這個回呼決定，
+     呼叫端自己決定要 Store.quiz.save 還是只更新畫面。
+     ============================================================ */
+  function aiDialog(qz, opt) {
+    opt = opt || {};
+    var AI = RQ.ai;
+
+    var out = U.el('div.ai-out', {
+      style: {
+        maxHeight: '340px', overflow: 'auto', whiteSpace: 'pre-wrap',
+        background: '#F7F3EB', border: '1px solid var(--line)', borderRadius: '12px',
+        padding: '12px 14px', fontSize: '13.5px', lineHeight: '1.75', display: 'none'
+      }
+    });
+    var qInp = U.el('textarea.input', {
+      rows: '3',
+      placeholder: '（選「自由提問」時填這裡，例如：這份試卷的難度適合小五嗎？第 3 篇的題目有沒有超出範圍？）'
+    });
+    var taskSel = U.el('select.input');
+    var missing = (qz.questions || []).filter(function (q) {
+      return !(q.answer || (q.answerKeys || []).length);
+    });
+    Object.keys(AI.TASKS).forEach(function (k) {
+      var label = AI.TASKS[k].label;
+      if (k === 'review') label += '（目前有 ' + missing.length + ' 題缺答案）';
+      taskSel.appendChild(U.el('option', { value: k, text: label }));
+    });
+    taskSel.value = opt.task || (missing.length ? 'review' : 'explain');
+
+    var applyBar = U.el('div.row.mt2');
+    applyBar.style.display = 'none';
+
+    var box = U.el('div', {}, [
+      U.el('div.tiny.muted', {
+        html: '會把這份試卷的<b>濃縮版 JSON</b>（文章截短、題目精簡）送到你設定的模型。' +
+          '<b>送出不代表套用</b>——回覆會先顯示在下面，你按「套用」才會寫回試卷。'
+      }),
+      U.el('div.mt2', {}, [U.el('label.tiny.muted', { text: '要做什麼' }), taskSel]),
+      U.el('div.mt1', {}, [U.el('label.tiny.muted', { text: '補充說明（選填）' }), qInp]),
+      out,
+      applyBar
+    ]);
+
+    var lastPatches = null;
+    var lastTask = null;
+
+    var btnRun = U.el('button.btn.primary', { text: '送出給 AI' });
+    var btnCopy = U.el('button.btn.sm', {
+      text: '複製回覆', onclick: function () {
+        var t = out.getAttribute('data-raw') || out.textContent;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(t).then(function () { U.toast('已複製', 'ok'); })
+            .catch(function () { U.download('ai-' + U.slug(qz.title) + '.txt', t); });
+        } else U.download('ai-' + U.slug(qz.title) + '.txt', t);
+      }
+    });
+    btnCopy.style.display = 'none';
+
+    btnRun.addEventListener('click', function () {
+      lastTask = taskSel.value;
+      lastPatches = null;
+      applyBar.innerHTML = ''; applyBar.style.display = 'none';
+      out.style.display = '';
+      out.textContent = '思考中…（依模型與題數不同，通常 5–40 秒）';
+      btnRun.disabled = true;
+      AI.run(lastTask, qz, { question: U.trim(qInp.value) }).then(function (res) {
+        btnRun.disabled = false;
+        btnCopy.style.display = '';
+        out.setAttribute('data-raw', res.text);
+        out.textContent = res.text;
+        var usage = res.usage && (res.usage.total_tokens || res.usage.totalTokenCount);
+        if (usage) out.textContent += '\n\n— 用了 ' + usage + ' tokens（模型 ' + (res.model || '') + '）';
+
+        /* 若回覆含 JSON Patch → 給「套用」按鈕 */
+        var patches = AI.extractJSON(res.text);
+        if (patches && patches.length) {
+          var dry = AI.applyPatches(qz, patches);
+          lastPatches = patches;
+          applyBar.innerHTML = '';
+          applyBar.appendChild(U.el('span.tiny', {
+            html: '偵測到 <b>' + patches.length + '</b> 筆修正建議，可套用 <b>' + dry.applied + '</b> 筆' +
+              (dry.skipped ? '（' + dry.skipped + ' 筆略過）' : '')
+          }));
+          applyBar.appendChild(U.el('button.btn.sm.sun', {
+            text: '預覽並套用修正', onclick: function () {
+              previewAiPatches(qz, lastPatches, lastTask, opt.save, function () {
+                if (opt.onDone) opt.onDone();
+              });
+            }
+          }));
+          applyBar.style.display = '';
+        }
+      }).catch(function (e) {
+        btnRun.disabled = false;
+        out.textContent = '❌ ' + ((e && e.message) || e) + '\n\n' +
+          (e && e.regionBlocked
+            ? '這是「地區限制」：你的金鑰沒問題，但 Google 的免費層不涵蓋香港／中國大陸。\n' +
+              '不用 VPN 的解法：① 通道改用 OpenRouter（香港可直接申請金鑰）② 通道改用「代理」讓 Apps Script 代打 ③ 開啟帳單。'
+            : '請到「設定 → ⑤ AI 助理」檢查通道與金鑰，或按「儲存並測試連線」。');
+      });
+    });
+
+    U.modal({
+      title: '🤖 AI 分析：' + (qz.title || ''),
+      width: 820,
+      body: box,
+      actions: [btnRun, btnCopy, { label: '關閉' }]
+    });
+
+    /* opt.autoRun → 開了就直接送出，老師不必再按一次 */
+    if (opt.autoRun) setTimeout(function () { btnRun.click(); }, 60);
+  }
+
+  /** 套用前的逐題預覽（差異表）——編輯頁與上傳頁共用 */
+  function previewAiPatches(qz, patches, task, save, done) {
+    var res = RQ.ai.applyPatches(qz, patches);
+    var applied = res.detail.filter(function (d) { return d.fields; });
+    var rows = applied.map(function (d) {
+      var before = (qz.questions || []).filter(function (x) { return x.no === d.no; })[0] || {};
+      var after = res.questions.filter(function (x) { return x.no === d.no; })[0] || {};
+      function cell(k) {
+        var b = String(before[k] || '').slice(0, 90);
+        var a = String(after[k] || '').slice(0, 90);
+        if (b === a) return '<td class="tiny muted">（不變）</td>';
+        return '<td class="tiny"><s class="muted">' + U.esc(b || '（空）') + '</s><br>→ ' + U.esc(a) + '</td>';
+      }
+      return '<tr><td>' + U.esc(d.no) + '</td><td class="tiny">' + U.esc(d.fields.join('、')) + '</td>' +
+        cell('answer') + cell('explanation') + '</tr>';
+    }).join('');
+
+    var t = U.el('table.tbl');
+    t.innerHTML = '<thead><tr><th>題號</th><th>欄位</th><th>答案</th><th>解析</th></tr></thead><tbody>' +
+      (rows || '<tr><td colspan="4" class="tiny muted">沒有任何可套用的修正</td></tr>') + '</tbody>';
+
+    var missed = res.detail.filter(function (d) { return d.why; });
+    var box = U.el('div', {}, [
+      U.el('div.tiny.muted', {
+        html: '這是套用後的結果預覽（尚未儲存）。套用後仍可再手動編輯，或按「儲存」後再「發佈到 GitHub」。'
+      }),
+      U.el('div.tbl-wrap.mt2', {}, [t])
+    ]);
+    if (missed.length) {
+      box.appendChild(U.el('div.warnbox.mt2', {
+        html: '有 ' + missed.length + ' 筆找不到對應題號（' +
+          missed.map(function (m) { return U.esc(m.no); }).join('、') + '），已略過。'
+      }));
+    }
+    box.appendChild(U.el('div.tiny.faint.mt2', {
+      html: '提醒：AI 產生的答案<b>不是標準答案</b>。請確認過再發佈給學生。'
+    }));
+
+    U.modal({
+      title: '套用 AI 修正',
+      width: 900,
+      body: box,
+      actions: [
+        {
+          label: '確定套用', kind: 'primary', onClick: function () {
+            qz.questions = res.questions;
+            qz.totalMarks = qz.questions.reduce(function (a, q) { return a + (parseFloat(q.marks) || 0); }, 0);
+            (qz.questions || []).forEach(syncAnswerKeys);
+            /* save 回呼：編輯頁會存進 store，上傳頁只更新畫面 */
+            Promise.resolve(save ? save(qz) : null).then(function () {
+              U.toast('已套用 ' + res.applied + ' 筆修正' + (save ? '並儲存' : ''), 'ok', 3600);
+              if (done) done();
+            }).catch(function (e) {
+              U.toast('套用後儲存失敗：' + ((e && e.message) || e), 'bad', 6000);
+            });
+          }
+        },
+        { label: '取消' }
+      ]
+    });
+  }
+
 
   function passageEditor(quiz, p, pi, refresh) {
     var box = U.el('div.subq');
@@ -1543,7 +1653,30 @@
               Backend.deleteQuiz(m.id, { cloud: true, github: true }).then(function (r) {
                 if (!r.ok) { U.toast('本機刪除失敗', 'bad'); delBtn.disabled = false; return; }
                 if (onGithub && r.github === false) {
-                  U.toast('試卷已刪除，但 GitHub 副本刪除失敗（請稍後重試）', 'bad');
+                  /* 把 GitHub 的**真實原因**說出來，不要只說「刪除失敗」——
+                     最常見的是 Token 過期或沒有 Contents 寫入權限，講清楚老師才知道怎麼辦。 */
+                  U.modal({
+                    title: '⚠️ 本機已刪除，但 GitHub 副本沒刪掉',
+                    width: 560,
+                    body: U.el('div', {}, [
+                      U.el('div', { text: '這份試卷已經從這台裝置刪除了，但 repo 上的檔案還在。' }),
+                      U.el('div.warnbox.mt2', { text: 'GitHub 回報：' + (r.githubError || '未知錯誤') }),
+                      U.el('div.tiny.muted.mt2', {
+                        html: '常見原因：<br>' +
+                          '① Token 過期或貼錯（到「設定 → ③ GitHub」按「測試連線」確認）<br>' +
+                          '② Token 沒有 <code>Contents: Read and write</code> 權限<br>' +
+                          '③ repo 名稱／擁有者填錯<br><br>' +
+                          '修好之後，可以用下方「🧹 檢查線上殘留檔案」把它清掉。'
+                      })
+                    ]),
+                    actions: [{ label: '知道了' }, {
+                      label: '立即檢查殘留檔', kind: 'primary', onClick: function () {
+                        setTimeout(function () { repairDialog(function () { view.innerHTML = ''; Teacher.quizzes(view); }); }, 120);
+                      }
+                    }]
+                  });
+                } else if (r.githubNote) {
+                  U.toast('試卷已刪除（repo 上本來就沒有這個檔案）', 'ok');
                 } else {
                   U.toast('試卷已刪除', 'ok');
                 }
@@ -1562,8 +1695,82 @@
       });
       tbl.appendChild(tb);
       box.appendChild(U.el('div.tbl-wrap', {}, [tbl]));
+
+      /* 線上殘留檔清掃：刪除失敗過的痕跡會留在 repo 裡，只能靠這顆按鈕收拾 */
+      if (Backend.GitHub && Backend.GitHub.ok && Backend.GitHub.ok()) {
+        box.appendChild(U.el('div.mt2.row', {}, [
+          U.el('button.btn.sm', {
+            text: '🧹 檢查線上殘留檔案',
+            onclick: function () { repairDialog(function () { view.innerHTML = ''; Teacher.quizzes(view); }); }
+          }),
+          U.el('span.tiny.faint', {
+            text: '比對 GitHub 上的試卷檔與清單；被刪掉、但 repo 還留著的檔案會列出來讓你清掉。',
+            style: { alignSelf: 'center', marginLeft: '8px' }
+          })
+        ]));
+      }
     });
   };
+
+  /**
+   * 「檢查線上殘留檔案」對話框。
+   * 先 dry-run 列出孤兒檔（清單裡沒有、repo 卻還留著），老師確認後才真的刪。
+   * 為什麼要這顆：刪除試卷時 GitHub 若失敗（Token 過期等），檔案會變成沒人管的幽靈檔。
+   */
+  function repairDialog(after) {
+    if (!Backend.GitHub.ok()) { U.toast('請先到「設定 → ③ GitHub」填好資料', 'bad'); return; }
+    U.toast('正在比對 GitHub…', 'ok', 1500);
+
+    Backend.repairRepo({ dryRun: true }).then(function (r) {
+      var listBox = U.el('div');
+      if (!r.orphans.length) {
+        listBox.appendChild(U.el('div.infobox', {
+          text: '✅ 沒有殘留檔案。線上有 ' + r.fileCount + ' 個試卷檔，清單有 ' + r.indexCount + ' 筆，完全對得上。'
+        }));
+      } else {
+        listBox.appendChild(U.el('div.warnbox', {
+          text: '發現 ' + r.orphans.length + ' 個殘留檔（清單裡已經沒有，但 repo 還留著）：'
+        }));
+        var ul = U.el('ul', { style: { margin: '6px 0 0', paddingLeft: '20px' } });
+        r.orphans.forEach(function (o) {
+          ul.appendChild(U.el('li', { text: o.name + '（' + Math.round((o.size || 0) / 1024) + ' KB）' }));
+        });
+        listBox.appendChild(ul);
+        listBox.appendChild(U.el('div.tiny.faint.mt2', {
+          text: '這些檔案學生看不到（不在清單裡就打不開），但會留在 repo 佔空間。'
+        }));
+      }
+
+      var acts = [{ label: '關閉' }];
+      if (r.orphans.length) {
+        acts.unshift({
+          label: '刪除這 ' + r.orphans.length + ' 個殘留檔', kind: 'danger', onClick: function () {
+            U.toast('正在刪除…', 'ok', 1500);
+            Backend.repairRepo({ dryRun: false }).then(function (r2) {
+              if (r2.errors && r2.errors.length) {
+                U.toast('已刪除 ' + r2.removed + ' 個，' + r2.errors.length + ' 個失敗：' + r2.errors[0].error, 'bad', 7000);
+              } else {
+                U.toast('已清除 ' + r2.removed + ' 個殘留檔', 'ok', 4200);
+              }
+              if (after) after();
+            }).catch(function (e) { U.toast('清除失敗：' + ((e && e.message) || ''), 'bad', 6000); });
+          }
+        });
+      }
+
+      U.modal({ title: '🧹 線上殘留檔案', width: 620, body: listBox, actions: acts });
+    }).catch(function (e) {
+      U.modal({
+        title: '⚠️ 無法檢查',
+        width: 560,
+        body: U.el('div', {}, [
+          U.el('div.warnbox', { text: (e && e.message) || String(e) }),
+          U.el('div.tiny.muted.mt2', { text: '請到「設定 → ③ GitHub」確認擁有者／repo／Token 是否正確，並按「測試連線」。' })
+        ]),
+        actions: [{ label: '關閉' }]
+      });
+    });
+  }
 
   /**
    * 清單頁的快速改名。
@@ -2439,13 +2646,25 @@
 
     /* ---- 通道選擇 ---- */
     var selProvider = U.el('select.input', { style: { maxWidth: '100%' } });
-    ['direct', 'gemini', 'hook'].forEach(function (k) {
+    ['openrouter', 'gemini', 'direct', 'hook'].forEach(function (k) {
       selProvider.appendChild(U.el('option', { value: k, text: AI.PROVIDERS[k].label }));
     });
     selProvider.value = c.provider;
     card.appendChild(U.el('div', {}, [
       U.el('label.tiny.muted', { text: '使用哪個通道' }), selProvider
     ]));
+
+    /* ⚠ 香港地區的問題最多人卡住，而且症狀是「連金鑰都申請不到」——
+       那看起來完全不像程式問題，老師只會覺得「壞了」。所以放在最上面先講。 */
+    card.appendChild(U.el('div.warnbox.mt2', {
+      html: '<b>🇭🇰 香港／中國大陸的老師請先看這裡：</b>Google AI Studio <b>不支援香港地區</b>，' +
+        '所以 Gemini 那條通道<b>連免費金鑰都申請不到</b>（不是我們的程式壞了）。<br>' +
+        '不用 VPN 也有兩條路：<br>' +
+        '① <b>改用 OpenRouter</b>（最簡單）——<code>openrouter.ai/keys</code> 直接申請，' +
+        '香港 IP 可用，有免費模型。<br>' +
+        '② <b>用 Apps Script 當代理</b>——Apps Script 在香港正常可用，而它的伺服器在 Google 支援區內，' +
+        '由它代打 Gemini 就繞過限制（見下方「代理」說明）。'
+    }));
 
     /* ---- 欄位 ---- */
     var inEnd = U.el('input.input', { value: c.endpoint, placeholder: 'https://api.openai.com/v1' });
@@ -2455,8 +2674,10 @@
     var inTemp = U.el('input.input', { type: 'number', value: String(c.temperature), min: '0', max: '2', step: '0.1', style: { maxWidth: '120px' } });
 
     var boxDirect = U.el('div');
-    boxDirect.appendChild(U.el('div', {}, [U.el('label.tiny.muted', { text: 'API 端點（OpenAI 相容 base；會自動接上 /chat/completions）' }), inEnd]));
-    boxDirect.appendChild(U.el('div.mt1', {}, [U.el('label.tiny.muted', { text: '模型名稱' }), inModel]));
+    var lblEnd = U.el('label.tiny.muted', { text: 'API 端點（OpenAI 相容 base；會自動接上 /chat/completions）' });
+    var lblModel = U.el('label.tiny.muted', { text: '模型名稱' });
+    boxDirect.appendChild(U.el('div', {}, [lblEnd, inEnd]));
+    boxDirect.appendChild(U.el('div.mt1', {}, [lblModel, inModel]));
     boxDirect.appendChild(U.el('div.mt1', {}, [U.el('label.tiny.muted', { text: 'API 金鑰' }), inKey]));
     boxDirect.appendChild(U.el('div.mt1.row', {}, [
       U.el('label.tiny.muted', { text: '溫度（0 = 最保守，建議 0.2）' }), inTemp,
@@ -2474,14 +2695,38 @@
         '也可以按「看看我的金鑰能用哪些模型」自己確認。<br><br>' +
         '<b>免費層限制</b>（Google 隨時會調）：約每分鐘 10 次、每日約 250–1,000 次請求。' +
         '批改一份試卷算 1 次，一個班級一個月絕對夠用。<br>' +
-        '<b>注意：</b>免費層的內容 Google 可能會用於改善產品。介意隱私的話請改用本機 Ollama 或付費層。'
+        '<b>注意：</b>免費層的內容 Google 可能會用於改善產品。介意隱私的話請改用本機 Ollama 或付費層。<br><br>' +
+        '<b>🇭🇰 如果出現「獲取免費 API 失敗」：</b>那是 Google 不支援香港地區造成的，' +
+        '<b>換 VPN 也未必穩</b>。最省事的解法是改用上面的 <b>OpenRouter</b>，' +
+        '或把通道換成「<b>代理</b>」由 Apps Script 代打。'
+    });
+
+    /* OpenRouter：香港可以直接申請、有免費模型，是繞開地區限制最簡單的一條路 */
+    var openrouterHelp = U.el('div.infobox.mt2', {
+      html: '<b>OpenRouter 金鑰怎麼拿（香港可直接申請，不必 VPN）：</b><br>' +
+        '① 開 <code>openrouter.ai</code> → 用 Google 帳號登入<br>' +
+        '② 到 <code>openrouter.ai/keys</code> → Create key → 複製那串 <code>sk-or-v1-…</code><br>' +
+        '③ 貼到上面的「API 金鑰」，按「儲存並測試連線」<br><br>' +
+        '<b>免費模型</b>：模型名稱結尾帶 <code>:free</code> 的就是免費（例如 ' +
+        '<code>google/gemini-2.5-flash</code> 本身有免費額度，' +
+        '<code>deepseek/deepseek-chat-v3.1:free</code> 是社群常見的免費選項）。' +
+        '免費模型的速率與額度由 OpenRouter 調整，偶爾會暫時排隊。<br>' +
+        '<b>付費模型</b>也可以走這條通道（同一個金鑰、同一個端點，只換模型名稱），' +
+        '費用依 OpenRouter 定價。<br><br>' +
+        '<b>隱私：</b>OpenRouter 是中間服務，你的試卷內容會經過它。介意隱私請改用本機 Ollama。'
     });
 
     var boxHook = U.el('div.warnbox.mt2', {
       html: '<b>代理通道：</b>請把 <code>tools/apps-script.gs</code> 貼進你的 Apps Script 並重新部署。' +
         '模型與金鑰改成填在 Apps Script 的「指令碼屬性」（<code>AI_PROVIDER</code>／<code>AI_ENDPOINT</code>／' +
         '<code>AI_MODEL</code>／<code>AI_KEY</code>），網站這邊只要填好上面的「④ 學生作答收集端」網址即可，' +
-        '金鑰完全不會出現在學生的瀏覽器裡。'
+        '金鑰完全不會出現在學生的瀏覽器裡。<br><br>' +
+        '<b>🇭🇰 香港的 Gemini 解法：</b><code>AI_PROVIDER</code> 填 <code>gemini</code>、' +
+        '<code>AI_MODEL</code> <b>留空</b>（程式會自動挑可用的模型），' +
+        '<code>AI_KEY</code> 填你拿到的 Gemini 金鑰。' +
+        'Apps Script 的伺服器在 Google 支援區內，所以<b>香港也能用，不需要 VPN</b>。<br>' +
+        '若連金鑰都申請不到，<code>AI_PROVIDER</code> 改填 <code>openrouter</code>，' +
+        '<code>AI_KEY</code> 填 OpenRouter 的金鑰即可。'
     });
 
     /* 代理通道的「備援」：主要通道失敗時，再走一次 hook */
@@ -2507,12 +2752,28 @@
         boxDirect.style.display = '';
         if (boxHook.parentNode) boxHook.parentNode.removeChild(boxHook);
       }
-      /* Gemini 的「免費金鑰怎麼拿」說明只在這條通道出現，其餘通道收起來 */
+      /* 各通道的專屬說明只在自己的通道出現，其餘收起來 */
       if (k === 'gemini') {
         boxDirect.appendChild(geminiHelp);
       } else if (geminiHelp.parentNode) {
         geminiHelp.parentNode.removeChild(geminiHelp);
       }
+      if (k === 'openrouter') {
+        boxDirect.appendChild(openrouterHelp);
+      } else if (openrouterHelp.parentNode) {
+        openrouterHelp.parentNode.removeChild(openrouterHelp);
+      }
+      /* hook 通道的欄位標籤要換句話說：那些值其實是「網站端對應的通道」 */
+      lblEnd.textContent = (k === 'hook')
+        ? '（留空即可，實際端點填在 Apps Script）'
+        : (k === 'gemini'
+          ? 'API 端點（Gemini 用；留空自動帶入）'
+          : 'API 端點（OpenAI 相容 base；會自動接上 /chat/completions）');
+      lblModel.textContent = (k === 'hook')
+        ? '（留空即可，實際模型填在 Apps Script）'
+        : (k === 'gemini'
+          ? '模型名稱（建議留空，讓程式自動挑最新可用）'
+          : '模型名稱');
       /* 換通道時帶入該通道的預設 endpoint／model（使用者改過就尊重） */
       var def = AI.PROVIDERS[k] || {};
       if (!U.trim(inEnd.value) && def.endpoint) inEnd.value = def.endpoint;
@@ -2550,7 +2811,7 @@
     card.appendChild(rowVia);
     card.appendChild(U.el('div.mt2', {}, [
       U.el('label.check', { style: { display: 'flex' } }, [
-        cbEnabled, U.el('span', { text: '在這台電腦啟用 AI 助理（編輯頁會出現「🤖 AI 分析」）' })
+        cbEnabled, U.el('span', { text: '在這台電腦啟用 AI 助理（編輯頁與上傳頁會出現「🤖 AI 分析」）' })
       ])
     ]));
 
@@ -2574,13 +2835,20 @@
               (r.switchedFrom ? ' <span class="tag warn">你填的 ' + U.esc(r.switchedFrom) + ' 已下架，已自動改用新模型</span>' : '');
             U.toast('AI 連線成功', 'ok');
           }).catch(function (e) {
-            testOut.innerHTML = '<span class="tag bad">失敗</span> ' + U.esc((e && e.message) || e);
+            testOut.innerHTML = '<span class="tag bad">失敗</span> ' + U.esc((e && e.message) || e) +
+              (e && e.regionBlocked
+                ? '<div class="warnbox mt1"><b>🇭🇰 這是地區限制，不是設定錯。</b><br>' +
+                  '你的金鑰可以正常使用，但 Google 的<b>免費層不涵蓋香港／中國大陸</b>。不用 VPN 的解法：<br>' +
+                  '① 通道改選 <b>OpenRouter</b>（最省事，香港可直接申請金鑰）<br>' +
+                  '② 通道改選 <b>代理</b>，讓 Apps Script 代打（Apps Script 在香港可用）<br>' +
+                  '③ 到 AI Studio 開啟帳單（變成付費層，地區不受限）</div>'
+                : '');
           });
         }
       }),
       U.el('button.btn.sm.sun', {
         text: '看看我的金鑰能用哪些模型', onclick: function () {
-          if (selProvider.value !== 'gemini') { U.toast('這顆按鈕只在 Gemini 通道有意義', 'bad'); return; }
+          if (selProvider.value !== 'gemini') { U.toast('這顆按鈕只在 Gemini 通道有意義（OpenRouter 請直接看它網站的模型清單）', 'bad', 4000); return; }
           AI.save(collect());
           testOut.innerHTML = '<span class="muted">正在向 Google 查詢…</span>';
           AI.listModels().then(function (r) {
@@ -2590,7 +2858,11 @@
               '<span class="tiny muted">' + picks.map(function (m) { return U.esc(m); }).join('、') + '</span>';
             if (!U.trim(inModel.value)) inModel.value = r.suggested;
           }).catch(function (e) {
-            testOut.innerHTML = '<span class="tag bad">失敗</span> ' + U.esc((e && e.message) || e);
+            var m = (e && e.message) || e;
+            testOut.innerHTML = '<span class="tag bad">失敗</span> ' + U.esc(m) +
+              (/not available|region|country|PERMISSION|403/i.test(String(m))
+                ? '<div class="tiny muted mt1">若訊息提到地區／國家，代表香港不支援免費層 —— 請改用 OpenRouter 或代理通道。</div>'
+                : '');
           });
         }
       }),
@@ -2607,12 +2879,14 @@
 
     card.appendChild(U.el('div.warnbox.mt2', {
       html: '<b>🔒 隱私與費用：</b>使用 AI 時，<b>試卷的文字會離開這台電腦</b>送到你選的服務商' +
-        '（OpenAI／Google／DeepSeek…）。含學生個人資料的內容請自行斟酌。' +
-        '費用由你的 API 帳號支付（Gemini 免費層則是 $0），一份試卷大約幾千到幾萬 token，' +
-        '程式已經先把文章截短、題目精簡過（見 <code>core/ai.js</code> 的 <code>packQuiz</code>）。'
+        '（OpenAI／Google／OpenRouter／DeepSeek…）。含學生個人資料的內容請自行斟酌。' +
+        '費用由你的 API 帳號支付（Gemini 免費層、OpenRouter 的 <code>:free</code> 模型則是 $0），' +
+        '一份試卷大約幾千到幾萬 token，程式已經先把文章截短、題目精簡過（見 <code>core/ai.js</code> 的 <code>packQuiz</code>）。'
     }));
     card.appendChild(U.el('div.tiny.faint.mt2', {
-      html: '<b>建議設定：</b>教學用途用 <b>Gemini 免費金鑰</b>就很夠（$0）；' +
+      html: '<b>建議設定：</b>' +
+        '<b>香港／中國大陸</b>用 <b>OpenRouter</b>（可申請、有免費模型）或 <b>代理</b>通道最順；' +
+        '其他地區用 <b>Gemini 免費金鑰</b>就很夠（$0）；' +
         '想完全離線可指向本機的 <code>Ollama</code>（端點填 <code>http://localhost:11434/v1</code>，金鑰隨便填），' +
         '這樣試卷完全不會離開你的電腦。'
     }));

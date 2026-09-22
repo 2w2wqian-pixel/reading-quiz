@@ -30,14 +30,22 @@
 
   var U = RQ.util;
 
-  var PROVIDERS = {
+  var   PROVIDERS = {
     direct: {
       label: 'OpenAI 相容端點（OpenAI／DeepSeek／Groq／Ollama…）',
       endpoint: 'https://api.openai.com/v1',
       model: 'gpt-4o-mini'
     },
+    openrouter: {
+      /* 🔴 香港／中國大陸的老師：這是**不需要 VPN、可以直接申請免費金鑰**的通道。
+         OpenRouter 有免費模型（模型 id 帶 :free），CORS 開放（allow-origin: *），
+         且不擋香港 IP。金鑰在 openrouter.ai/keys 申請。 */
+      label: 'OpenRouter（香港可用、有免費模型、不必 VPN）',
+      endpoint: 'https://openrouter.ai/api/v1',
+      model: 'google/gemini-2.5-flash'
+    },
     gemini: {
-      label: 'Google Gemini（免費金鑰即可，不必付費）',
+      label: 'Google Gemini（免費金鑰即可；⚠ 香港無法申請，見下方說明）',
       endpoint: 'https://generativelanguage.googleapis.com/v1beta',
       /* ⚠ Google 會定期淘汰舊模型：gemini-2.0-flash 的免費端點已在 2026-06-01 關閉。
          這裡只放「找不到可用模型時」的後備值；實際送出前會先問一次 ListModels，
@@ -199,6 +207,7 @@
     var hookUrl = (s.hook && s.hook.postUrl) || '';
     if (c.provider === 'hook') return hookUrl ? { kind: 'hook', ready: true } : { kind: 'hook', ready: false, why: '尚未設定 hook.postUrl' };
     if (c.provider === 'gemini') return c.apiKey ? { kind: 'gemini', ready: true } : { kind: 'gemini', ready: false, why: '尚未填 Gemini API 金鑰' };
+    if (c.provider === 'openrouter') return c.apiKey ? { kind: 'direct', ready: true } : { kind: 'openrouter', ready: false, why: '尚未填 OpenRouter API 金鑰' };
     if (c.provider === 'direct') return c.apiKey ? { kind: 'direct', ready: true } : { kind: 'direct', ready: false, why: '尚未填 API 金鑰' };
     return { kind: c.provider, ready: false, why: '未知的提供者' };
   }
@@ -268,13 +277,19 @@
     var base = String(c.endpoint || '').replace(/\/+$/, '');
     if (!base) throw new Error('尚未設定 API 端點（endpoint）');
     var url = base + (/(\/v1|\/openai)$/.test(base) || /\/v\d/.test(base) ? '/chat/completions' : '/v1/chat/completions');
+    var headers = {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + c.apiKey
+    };
+    /* OpenRouter 免費模型會檢查來源標頭，缺了會被 403 擋掉 */
+    if (/openrouter\.ai/i.test(base)) {
+      headers['HTTP-Referer'] = 'https://2w2wqian-pixel.github.io/reading-quiz/';
+      headers['X-Title'] = 'reading-quiz';
+    }
     return fetch(url, {
       method: 'POST',
       cache: 'no-store',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + c.apiKey
-      },
+      headers: headers,
       body: JSON.stringify({
         model: c.model || PROVIDERS.direct.model,
         temperature: c.temperature,
@@ -285,13 +300,22 @@
         var j = null;
         try { j = JSON.parse(t); } catch (e) { /* 非 JSON */ }
         if (!r.ok) {
-          var msg = (j && j.error && (j.error.message || j.error)) || t.slice(0, 300) || ('HTTP ' + r.status);
-          throw new Error('AI 服務回應錯誤（' + r.status + '）：' + msg);
+          var msg = (j && j.error && (j.error.message || j.error)) ||
+            (typeof j === 'string' ? j : '') || t.slice(0, 300) || ('HTTP ' + r.status);
+          var err = new Error('AI 服務回應錯誤（' + r.status + '）：' + msg);
+          err.status = r.status;
+          err.reason = (j && j.error && j.error.status) || '';
+          err.regionBlocked = isRegionBlocked(r.status, msg, err.reason);
+          throw err;
         }
         if (!j) throw new Error('AI 回應不是 JSON：' + t.slice(0, 200));
         var ch = j.choices && j.choices[0];
         var txt = ch && ((ch.message && ch.message.content) || ch.text);
-        if (!txt) throw new Error('AI 回應沒有內容');
+        if (!txt) {
+          throw new Error('AI 回應沒有內容' +
+            (ch && ch.finish_reason ? '（finish_reason=' + ch.finish_reason + '）' : '') +
+            (j.error ? '（' + JSON.stringify(j.error).slice(0, 160) + '）' : ''));
+        }
         return { text: txt, model: j.model || c.model, usage: j.usage || null };
       });
     });
@@ -351,6 +375,28 @@
     return want || PROVIDERS.gemini.model;
   }
 
+  /**
+   * 判斷這個錯誤是不是「地區不支援」。
+   *
+   * 🔴 香港／中國大陸的老師會踩到這個：Google AI Studio **不支援香港地區**，
+   *    所以連「申請免費金鑰」這一步都做不到（金鑰拿不到，不是程式問題）。
+   *    就算硬是拿到一把金鑰，免費層本身也**不涵蓋**這些地區，呼叫時會回
+   *    400 FAILED_PRECONDITION「Gemini API free tier is not available in your country」。
+   *
+   *    兩種症狀要分開：
+   *    ‧ 申請階段失敗 → 根本沒金鑰（UI 要引導到 Apps Script 代理）
+   *    ‧ 呼叫階段 400 FAILED_PRECONDITION / "not available in your country"
+   *      → 有金鑰但這個國家沒有免費層（要嘛開帳單，要嘛改走代理）
+   */
+  function isRegionBlocked(status, msg, reason) {
+    var s = String(msg || '');
+    if (reason === 'FAILED_PRECONDITION') return true;
+    if (/free tier is not available|not available in your (country|region)/i.test(s)) return true;
+    /* 403 且訊息提到區域／國家（有些邊界情況不給 FAILED_PRECONDITION） */
+    if (status === 403 && /region|country|location/i.test(s)) return true;
+    return false;
+  }
+
   function callGemini(c, messages) {
     var base = String(c.endpoint || PROVIDERS.gemini.endpoint).replace(/\/+$/, '');
     var sys = messages.filter(function (m) { return m.role === 'system'; })
@@ -377,10 +423,12 @@
           try { j = JSON.parse(t); } catch (e) { }
           if (!r.ok) {
             var msg = (j && j.error && (j.error.message || j.error)) || t.slice(0, 300) || ('HTTP ' + r.status);
+            var reason = (j && j.error && j.error.status) || '';
             var err = new Error('Gemini 回應錯誤（' + r.status + '）：' + msg);
             err.status = r.status;
             /* 把 Google 的機器可讀原因帶出來（NOT_FOUND / RESOURCE_EXHAUSTED…） */
-            err.reason = (j && j.error && j.error.status) || '';
+            err.reason = reason;
+            err.regionBlocked = isRegionBlocked(r.status, msg, reason);
             throw err;
           }
           var cand = j && j.candidates && j.candidates[0];

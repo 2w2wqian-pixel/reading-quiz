@@ -882,17 +882,60 @@
         .then(function (j) { return Array.isArray(j) ? j.map(function (f) { return f.name; }) : []; });
     },
 
-    /** 刪除檔案（要先取 sha） */
+    /**
+     * 刪除檔案（要先取 sha）。
+     *
+     * 與 write() 同樣要處理 sha 衝撞：`read → DELETE` 之間若檔案被改動，
+     * GitHub 會回 409「<path> does not match <sha>」→ 重讀 sha 再試。
+     *
+     * ⚠️ 回傳值語意（呼叫端必須分辨）：
+     *   true          → 真的刪掉了
+     *   false         → **檔案本來就不存在**（沒東西可刪，不算失敗）
+     *   reject(Error) → 真的失敗（權限、網路、409 用盡…）
+     * 早期版本把所有失敗都吞成 false，導致「刪除失敗」在 UI 上長得跟
+     * 「本來就沒有」一模一樣，老師只看到一句含糊的「刪除失敗」。
+     */
     remove: function (path, message) {
       if (!GitHub.ok()) return Promise.reject(new Error('尚未設定 GitHub'));
       var c = GitHub.cfg();
-      return GitHub.read(path).then(function (cur) {
-        if (!cur) return false;                       // 本來就沒有
-        return GitHub.api('/repos/' + c.owner + '/' + c.repo + '/contents/' + path, {
-          method: 'DELETE',
-          body: { message: message || ('remove ' + path), sha: cur.sha, branch: c.branch || 'main' }
-        }).then(function () { return true; });
-      });
+      var attempt = 0;
+
+      function attemptDelete() {
+        attempt++;
+        return GitHub.read(path).then(function (cur) {
+          if (!cur) return false;                     // 本來就沒有 → 不是失敗
+          return GitHub.api('/repos/' + c.owner + '/' + c.repo + '/contents/' + path, {
+            method: 'DELETE',
+            body: { message: message || ('remove ' + path), sha: cur.sha, branch: c.branch || 'main' }
+          }).then(function () { return true; });
+        }).catch(function (e) {
+          var msg = (e && e.message) || '';
+          if (attempt < 3 && /does not match|is at|\b409\b/i.test(msg)) {
+            return new Promise(function (res) { setTimeout(res, 300 * attempt); }).then(attemptDelete);
+          }
+          if (/does not match|is at|\b409\b/i.test(msg)) {
+            throw new Error('刪除時檔案版本衝到（' + path + '），請再按一次「刪除」');
+          }
+          throw e;
+        });
+      }
+      return attemptDelete();
+    },
+
+    /**
+     * 列出某個目錄底下的檔案（含 path，供「殘留檔清掃」比對用）。
+     * `list()` 只回檔名，這裡回完整路徑。
+     */
+    listDetailed: function (dir) {
+      if (!GitHub.ok()) return Promise.reject(new Error('尚未設定 GitHub'));
+      var c = GitHub.cfg();
+      return GitHub.api('/repos/' + c.owner + '/' + c.repo + '/contents/' + dir +
+        '?ref=' + encodeURIComponent(c.branch || 'main'))
+        .then(function (j) {
+          if (!Array.isArray(j)) return [];
+          return j.filter(function (f) { return f.type === 'file'; })
+            .map(function (f) { return { name: f.name, path: f.path, sha: f.sha, size: f.size }; });
+        });
     },
     test: function () {
       if (!GitHub.ok()) return Promise.reject(new Error('請先填寫擁有者、repo 與 Token'));
@@ -1140,14 +1183,15 @@
 
     /**
      * 刪除試卷。
-     * 本機一定刪除；GitHub / Firebase 為 best-effort（失敗也不擋本機）。
+     * 本機一定刪除；GitHub / Firebase 為 best-effort（失敗也不擋本機），
+     * **但失敗的原因要留下來**（res.githubError），否則老師只看到一句無解的「刪除失敗」。
      * @param {string} id
      * @param {Object} opt { cloud:bool, github:bool }  是否連雲端 / repo 一起刪
-     * @returns {Promise<{ok:boolean, github:?boolean, cloud:?boolean}>}
+     * @returns {Promise<{ok:boolean, github:?boolean, githubError:?string, cloud:?boolean}>}
      */
     deleteQuiz: function (id, opt) {
       opt = opt || {};
-      var res = { ok: false, github: null, cloud: null };
+      var res = { ok: false, github: null, githubError: null, cloud: null };
 
       var localJob = Store.quiz.del(id)
         .then(function () { res.ok = true; })
@@ -1165,18 +1209,79 @@
         jobs.push(
           GitHub.remove(base + '/' + id + '.json', 'delete quiz: ' + id)
             .then(function (r) {
-              res.github = !!r;
+              /* r === false → 檔案本來就不在 repo（沒東西可刪，視為成功） */
+              res.github = (r === false) ? true : !!r;
+              if (r === false) res.githubNote = 'repo 上本來就沒有這個檔案';
               return GitHub.readJSON(base + '/index.json', []).then(function (idx) {
+                if (!Array.isArray(idx)) return true;
                 var next = idx.filter(function (m) { return m.id !== id; });
                 if (next.length === idx.length) return true;
                 return GitHub.write(base + '/index.json', next, 'remove from index: ' + id);
               });
             })
-            .catch(function () { res.github = false; return false; })
+            .catch(function (e) {
+              res.github = false;
+              res.githubError = (e && e.message) || String(e);
+              return false;
+            })
         );
+      } else if (opt.github && !GitHub.ok()) {
+        res.github = false;
+        res.githubError = '尚未設定 GitHub（缺少擁有者／repo／Token）';
       }
 
       return Promise.all(jobs).then(function () { return res; });
+    },
+
+    /**
+     * 修復「線上殘留檔」：把 repo 上存在、但**清單已經沒有**的試卷檔掃出來並刪掉。
+     * 老師刪除試卷時 GitHub 若失敗，檔案就會留在 repo 裡沒人管（幽靈檔）。
+     *
+     * ⚠️ 安全設計：只刪「清單裡確實沒有」的檔案，且一定保留 index.json 本身。
+     *    「本機沒有」有四種可能，但「**清單也沒有**」就沒有模糊空間了
+     *    —— 清單是學生端列試卷的唯一來源，不在清單裡的檔案學生永遠看不到。
+     *
+     * @param {Object} opt { dryRun:bool }  dryRun=true 只回報不刪除（預設 true）
+     * @returns {Promise<{ok:boolean, indexCount:number, fileCount:number,
+     *                    orphans:Array<{id,name,size}>, removed:number, errors:Array}>}
+     */
+    repairRepo: function (opt) {
+      opt = opt || {};
+      var dryRun = opt.dryRun !== false;
+      if (!GitHub.ok()) return Promise.reject(new Error('尚未設定 GitHub（缺少擁有者／repo／Token）'));
+      var base = (Settings.get().gh.path || 'data') + '/quizzes';
+      return GitHub.readJSON(base + '/index.json', []).then(function (idx) {
+        idx = Array.isArray(idx) ? idx : [];
+        var known = {};
+        idx.forEach(function (m) { if (m && m.id) known[m.id] = true; });
+        return GitHub.listDetailed(base).then(function (files) {
+          var orphans = files.filter(function (f) {
+            if (f.name === 'index.json') return false;          // 清單本身永遠保留
+            if (!/\.json$/i.test(f.name)) return false;
+            var id = f.name.replace(/\.json$/i, '');
+            return !known[id];
+          }).map(function (f) {
+            return { id: f.name.replace(/\.json$/i, ''), name: f.name, size: f.size, path: f.path };
+          });
+
+          if (dryRun || !orphans.length) {
+            return { ok: true, dryRun: dryRun, indexCount: idx.length, fileCount: files.length,
+              orphans: orphans, removed: 0, errors: [] };
+          }
+          /* 逐一刪除（GitHub Contents API 一次只能刪一個檔） */
+          var removed = 0, errors = [];
+          return orphans.reduce(function (p, o) {
+            return p.then(function () {
+              return GitHub.remove(o.path, 'cleanup orphan quiz: ' + o.id)
+                .then(function () { removed++; })
+                .catch(function (e) { errors.push({ id: o.id, error: (e && e.message) || String(e) }); });
+            });
+          }, Promise.resolve()).then(function () {
+            return { ok: true, dryRun: false, indexCount: idx.length, fileCount: files.length,
+              orphans: orphans, removed: removed, errors: errors };
+          });
+        });
+      });
     },
 
     pullQuizzes: function () {

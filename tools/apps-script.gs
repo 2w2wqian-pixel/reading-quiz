@@ -44,15 +44,21 @@ var WRITE_KEY = '';
    用途：讓「設定 → AI 助理」的 hook 通道把請求轉給大模型，
    金鑰留在這裡（指令碼屬性），學生的瀏覽器完全看不到。
 
-   設定方式：Apps Script → 專案設定 → 指令碼屬性，新增四個：
-     AI_PROVIDER  direct | gemini          （預設 direct）
-     AI_ENDPOINT  https://api.openai.com/v1
-     AI_MODEL     gpt-4o-mini
-     AI_KEY       sk-…
+   ★★★ 香港／中國大陸的老師請看這裡 ★★★
+   Google AI Studio **不支援香港地區**，所以在那邊連「申請免費金鑰」
+   都做不到。但 **Apps Script 本身在香港是正常可用的**，而它的伺服器
+   在 Google 的支援區域內 → 由它代打 Gemini 就完全繞過地區限制，
+   而且**不需要 VPN**。
+
+   設定方式：Apps Script → 專案設定 → 指令碼屬性，新增：
+     AI_PROVIDER  gemini | direct | openrouter   （預設 direct）
+     AI_ENDPOINT  留空即可（會依 provider 自動決定）
+     AI_MODEL     留空即可（gemini 會自動挑最新可用的 flash）
+     AI_KEY       你的金鑰
    另外把 AI_ENABLED 設成 true 才會生效（避免沒設定就被打）。
 
-   若不想用 Google 的伺服器轉發，就不要設 AI_ENABLED，
-   網站那邊改用 direct／gemini 通道即可。
+   若要拿 Gemini 金鑰但人在香港：可以先請在支援地區的朋友代為申請，
+   或直接用 OpenRouter／DeepSeek 的金鑰（這兩家在香港可直接申請）。
    ============================================================ */
 var AI_ENABLED = false;
 
@@ -66,6 +72,45 @@ function aiProps_() {
   };
 }
 
+/** Gemini 偏好序（新→舊）；執行時會先問 ListModels，這裡只是後備 */
+var AI_GEMINI_PREFERENCE = [
+  'gemini-flash-latest', 'gemini-3-flash-preview', 'gemini-2.5-flash',
+  'gemini-2.5-flash-lite', 'gemini-2.0-flash-lite', 'gemini-2.0-flash'
+];
+
+/**
+ * 問 Google「這把金鑰能用哪些模型」，挑一個最新的 flash。
+ * 為什麼要問：Google 會定期淘汰舊模型（gemini-2.0-flash 已在 2026-06-01 停用），
+ * 寫死模型名會在某天突然 404。
+ */
+function aiPickGeminiModel_(endpoint, key, want) {
+  var url = String(endpoint).replace(/\/+$/, '') + '/models?key=' + encodeURIComponent(key) + '&pageSize=200';
+  var models = [];
+  try {
+    var res = UrlFetchApp.fetch(url, { method: 'get', muteHttpExceptions: true });
+    if (res.getResponseCode() === 200) {
+      var j = JSON.parse(res.getContentText());
+      models = (j.models || []).filter(function (m) {
+        var methods = m.supportedGenerationMethods || [];
+        return methods.indexOf('generateContent') >= 0;
+      }).map(function (m) {
+        return String(m.name || '').replace(/^models\//, '');
+      }).filter(function (n) {
+        /* embedding / imagen / veo / tts 不是聊天模型 */
+        return n && !/embedding|aqa|imagen|veo|tts|native-audio/i.test(n);
+      });
+    }
+  } catch (e) { /* 讀不到就退回偏好序 */ }
+
+  if (want && models.indexOf(want) >= 0) return want;
+  for (var i = 0; i < AI_GEMINI_PREFERENCE.length; i++) {
+    if (models.indexOf(AI_GEMINI_PREFERENCE[i]) >= 0) return AI_GEMINI_PREFERENCE[i];
+  }
+  var flash = models.filter(function (n) { return /flash/i.test(n); });
+  if (flash.length) return flash[0];
+  return want || AI_GEMINI_PREFERENCE[2];
+}
+
 /** 代理一次對話請求；回傳 {text, model, usage} */
 function aiChat_(d) {
   if (!AI_ENABLED) throw new Error('代理未啟用（請在 Apps Script 設 AI_ENABLED = true）');
@@ -76,8 +121,17 @@ function aiChat_(d) {
   var endpoint = d.endpoint || c.endpoint;
   var model = d.model || c.model;
   if (!c.key) throw new Error('尚未在 Apps Script 設定 AI_KEY');
-  if (provider === 'gemini' && !endpoint) endpoint = 'https://generativelanguage.googleapis.com/v1beta';
-  if (provider !== 'gemini' && !endpoint) endpoint = 'https://api.openai.com/v1';
+
+  if (provider === 'gemini') {
+    if (!endpoint) endpoint = 'https://generativelanguage.googleapis.com/v1beta';
+    /* 沒指定模型（或指定的已下架）→ 自動問一個可用的 */
+    if (!model) model = aiPickGeminiModel_(endpoint, c.key, '');
+  } else if (provider === 'openrouter') {
+    if (!endpoint) endpoint = 'https://openrouter.ai/api/v1';
+    if (!model) model = 'google/gemini-2.5-flash';
+  } else {
+    if (!endpoint) endpoint = 'https://api.openai.com/v1';
+  }
 
   var messages = d.messages || [];
   var body, url, headers;
@@ -86,7 +140,7 @@ function aiChat_(d) {
       .map(function (m) { return m.content; }).join('\n');
     var contents = messages.filter(function (m) { return m.role !== 'system'; })
       .map(function (m) { return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }; });
-    url = String(endpoint).replace(/\/+$/, '') + '/models/' + encodeURIComponent(model || 'gemini-2.0-flash') +
+    url = String(endpoint).replace(/\/+$/, '') + '/models/' + encodeURIComponent(model) +
       ':generateContent?key=' + encodeURIComponent(c.key);
     body = { contents: contents, generationConfig: { temperature: d.temperature || 0.2, maxOutputTokens: 8192 } };
     if (sys) body.systemInstruction = { parts: [{ text: sys }] };
@@ -96,6 +150,10 @@ function aiChat_(d) {
     url = base + (/\/v\d/.test(base) ? '/chat/completions' : '/v1/chat/completions');
     body = { model: model || 'gpt-4o-mini', temperature: d.temperature || 0.2, messages: messages };
     headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + c.key };
+    if (provider === 'openrouter') {
+      headers['HTTP-Referer'] = 'https://2w2wqian-pixel.github.io/reading-quiz/';
+      headers['X-Title'] = 'reading-quiz';
+    }
   }
 
   var res = UrlFetchApp.fetch(url, {
@@ -108,6 +166,12 @@ function aiChat_(d) {
   try { j = JSON.parse(txt); } catch (e) { }
   if (code < 200 || code >= 300) {
     var msg = (j && j.error && (j.error.message || j.error)) || txt.slice(0, 300);
+    if (j && j.error && j.error.status === 'FAILED_PRECONDITION') {
+      msg += '（這把金鑰的地區沒有免費層；請在 AI Studio 開啟帳單，或改用 OpenRouter／DeepSeek）';
+    }
+    if (code === 404 && provider === 'gemini' && d.model) {
+      msg += '（模型「' + d.model + '」可能已下架；把 AI_MODEL 留空讓程式自動挑）';
+    }
     throw new Error('AI 服務回應錯誤（' + code + '）：' + msg);
   }
   var out = '';
@@ -115,6 +179,9 @@ function aiChat_(d) {
     var cand = j && j.candidates && j.candidates[0];
     out = cand && cand.content && cand.content.parts
       ? cand.content.parts.map(function (p) { return p.text || ''; }).join('') : '';
+    if (!out && cand && cand.finishReason === 'MAX_TOKENS') {
+      throw new Error('AI 回應被長度上限截斷（finishReason=MAX_TOKENS）：這次的試卷太長，請分批送出');
+    }
   } else {
     var ch = j && j.choices && j.choices[0];
     out = ch && ((ch.message && ch.message.content) || ch.text) || '';

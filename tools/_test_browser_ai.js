@@ -36,6 +36,8 @@ const PROBE = [
   '    try {',
   '      var RQ = window.RQ;',
   '      RQ.settings.set({ session: { role: "teacher" } });',
+  '      /* 切到 Gemini 通道，讓 Gemini 專屬的說明框也一起渲染（才驗得到） */',
+  '      if (RQ.ai) RQ.ai.save({ provider: "gemini" });',
   '      var view = document.getElementById("view");',
   '      if (RQ.teacher && RQ.teacher.data) RQ.teacher.data(view);',
   '      lines.push("OK");',
@@ -91,6 +93,9 @@ server.listen(0, '127.0.0.1', () => {
       ['設定頁有 direct 通道的 API 端點欄位', /API 端點/.test(text)],
       ['設定頁有隱私提醒', /試卷的文字會離開這台電腦/.test(text)],
       ['設定頁有 Ollama 離線建議', /Ollama/.test(text)],
+      ['設定頁有 Gemini 免費金鑰取得說明', /aistudio\.google\.com\/apikey/.test(text)],
+      ['設定頁有「看看我的金鑰能用哪些模型」按鈕', /看看我的金鑰能用哪些模型/.test(text)],
+      ['設定頁有 Gemini 免費層限制提醒', /每分鐘 10 次/.test(text)],
       ['設定頁的卡片編號（h3）沒有重複', dupNumbers.length === 0]
     ];
     checks.forEach(([n, ok]) => { console.log((ok ? 'PASS  ' : 'FAIL  ') + n); if (!ok) fails++; });

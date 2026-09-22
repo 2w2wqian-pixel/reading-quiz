@@ -2464,6 +2464,19 @@
     ]));
     card.appendChild(boxDirect);
 
+    /* Gemini 的專屬說明：最多人卡在這裡（只在 Gemini 通道顯示） */
+    var geminiHelp = U.el('div.infobox.mt2', {
+      html: '<b>Gemini 免費金鑰怎麼拿（不用信用卡、不用付費）：</b><br>' +
+        '① 開 <code>aistudio.google.com/apikey</code>（用你的 Google 帳號登入）<br>' +
+        '② 按「Create API key」→ 複製那串 <code>AIza…</code><br>' +
+        '③ 貼到上面的「API 金鑰」，按「儲存並測試連線」<br>' +
+        '端點與模型<b>不用自己填</b>——程式會自動問 Google 現在有哪些模型可用並挑一個；' +
+        '也可以按「看看我的金鑰能用哪些模型」自己確認。<br><br>' +
+        '<b>免費層限制</b>（Google 隨時會調）：約每分鐘 10 次、每日約 250–1,000 次請求。' +
+        '批改一份試卷算 1 次，一個班級一個月絕對夠用。<br>' +
+        '<b>注意：</b>免費層的內容 Google 可能會用於改善產品。介意隱私的話請改用本機 Ollama 或付費層。'
+    });
+
     var boxHook = U.el('div.warnbox.mt2', {
       html: '<b>代理通道：</b>請把 <code>tools/apps-script.gs</code> 貼進你的 Apps Script 並重新部署。' +
         '模型與金鑰改成填在 Apps Script 的「指令碼屬性」（<code>AI_PROVIDER</code>／<code>AI_ENDPOINT</code>／' +
@@ -2493,6 +2506,12 @@
       } else {
         boxDirect.style.display = '';
         if (boxHook.parentNode) boxHook.parentNode.removeChild(boxHook);
+      }
+      /* Gemini 的「免費金鑰怎麼拿」說明只在這條通道出現，其餘通道收起來 */
+      if (k === 'gemini') {
+        boxDirect.appendChild(geminiHelp);
+      } else if (geminiHelp.parentNode) {
+        geminiHelp.parentNode.removeChild(geminiHelp);
       }
       /* 換通道時帶入該通道的預設 endpoint／model（使用者改過就尊重） */
       var def = AI.PROVIDERS[k] || {};
@@ -2551,8 +2570,25 @@
           testOut.innerHTML = '<span class="muted">測試中…（會實際送一次最短的請求）</span>';
           AI.ping().then(function (r) {
             testOut.innerHTML = '<span class="tag mint">OK</span> 模型回覆：' +
-              U.esc(r.text) + ' <span class="faint">（' + U.esc(r.model || '') + '）</span>';
+              U.esc(r.text) + ' <span class="faint">（實際使用 ' + U.esc(r.model || '') + '）</span>' +
+              (r.switchedFrom ? ' <span class="tag warn">你填的 ' + U.esc(r.switchedFrom) + ' 已下架，已自動改用新模型</span>' : '');
             U.toast('AI 連線成功', 'ok');
+          }).catch(function (e) {
+            testOut.innerHTML = '<span class="tag bad">失敗</span> ' + U.esc((e && e.message) || e);
+          });
+        }
+      }),
+      U.el('button.btn.sm.sun', {
+        text: '看看我的金鑰能用哪些模型', onclick: function () {
+          if (selProvider.value !== 'gemini') { U.toast('這顆按鈕只在 Gemini 通道有意義', 'bad'); return; }
+          AI.save(collect());
+          testOut.innerHTML = '<span class="muted">正在向 Google 查詢…</span>';
+          AI.listModels().then(function (r) {
+            var picks = r.preferred.slice(0, 12);
+            testOut.innerHTML = '<span class="tag mint">共 ' + r.all.length + ' 個</span> ' +
+              '<span class="faint">建議用</span> <b>' + U.esc(r.suggested) + '</b><br>' +
+              '<span class="tiny muted">' + picks.map(function (m) { return U.esc(m); }).join('、') + '</span>';
+            if (!U.trim(inModel.value)) inModel.value = r.suggested;
           }).catch(function (e) {
             testOut.innerHTML = '<span class="tag bad">失敗</span> ' + U.esc((e && e.message) || e);
           });
@@ -2572,12 +2608,12 @@
     card.appendChild(U.el('div.warnbox.mt2', {
       html: '<b>🔒 隱私與費用：</b>使用 AI 時，<b>試卷的文字會離開這台電腦</b>送到你選的服務商' +
         '（OpenAI／Google／DeepSeek…）。含學生個人資料的內容請自行斟酌。' +
-        '費用由你的 API 帳號支付，一份試卷大約幾千到幾萬 token，' +
+        '費用由你的 API 帳號支付（Gemini 免費層則是 $0），一份試卷大約幾千到幾萬 token，' +
         '程式已經先把文章截短、題目精簡過（見 <code>core/ai.js</code> 的 <code>packQuiz</code>）。'
     }));
     card.appendChild(U.el('div.tiny.faint.mt2', {
-      html: '<b>建議設定：</b>教學用途選 <code>gpt-4o-mini</code>／<code>gemini-2.0-flash</code> 這類便宜模型就很夠用；' +
-        '想省錢也可以指向本機的 <code>Ollama</code>（端點填 <code>http://localhost:11434/v1</code>，金鑰隨便填），' +
+      html: '<b>建議設定：</b>教學用途用 <b>Gemini 免費金鑰</b>就很夠（$0）；' +
+        '想完全離線可指向本機的 <code>Ollama</code>（端點填 <code>http://localhost:11434/v1</code>，金鑰隨便填），' +
         '這樣試卷完全不會離開你的電腦。'
     }));
 

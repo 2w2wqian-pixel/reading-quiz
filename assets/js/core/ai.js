@@ -37,9 +37,12 @@
       model: 'gpt-4o-mini'
     },
     gemini: {
-      label: 'Google Gemini',
+      label: 'Google Gemini（免費金鑰即可，不必付費）',
       endpoint: 'https://generativelanguage.googleapis.com/v1beta',
-      model: 'gemini-2.0-flash'
+      /* ⚠ Google 會定期淘汰舊模型：gemini-2.0-flash 的免費端點已在 2026-06-01 關閉。
+         這裡只放「找不到可用模型時」的後備值；實際送出前會先問一次 ListModels，
+         自動挑最新可用的 flash（見 pickGeminiModel）。 */
+      model: 'gemini-2.5-flash'
     },
     hook: {
       label: '自架代理（Apps Script／Cloudflare Worker，金鑰不外流）',
@@ -47,6 +50,17 @@
       model: ''
     }
   };
+
+  /* Gemini 免費層的模型偏好順序（由新到舊）。
+     為什麼不寫死一個：Google 幾乎每季就淘汰舊模型，寫死會在某天突然 404。 */
+  var GEMINI_PREFERENCE = [
+    'gemini-flash-latest',
+    'gemini-3-flash-preview',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-2.0-flash-lite',
+    'gemini-2.0-flash'
+  ];
 
   var DEFAULT_AI = {
     enabled: false,
@@ -284,38 +298,121 @@
   }
 
   /* ---------- 通道：Gemini ---------- */
+
+  /* 快取「這把金鑰可用的模型清單」，避免每次都多打一趟 ListModels */
+  var _gemCache = {};   /* { '<金鑰前 8 碼>@<base>': [modelId, …] } */
+
+  /** 清掉模型清單快取（測試用；換金鑰時也順手清） */
+  function clearModelCache() { _gemCache = {}; return true; }
+
+  /** 問 Google 這把金鑰現在能用哪些 generateContent 模型 */
+  function listGeminiModels(c) {
+    var base = String(c.endpoint || PROVIDERS.gemini.endpoint).replace(/\/+$/, '');
+    var cacheKey = String(c.apiKey || '').slice(0, 8) + '@' + base;
+    if (_gemCache[cacheKey]) return Promise.resolve(_gemCache[cacheKey]);
+    var url = base + '/models?' + (c.keyQuery || 'key') + '=' + encodeURIComponent(c.apiKey) + '&pageSize=200';
+    return fetch(url, { method: 'GET', cache: 'no-store' }).then(function (r) {
+      return r.text().then(function (t) {
+        var j = null;
+        try { j = JSON.parse(t); } catch (e) { }
+        if (!r.ok) {
+          var msg = (j && j.error && (j.error.message || j.error)) || t.slice(0, 200) || ('HTTP ' + r.status);
+          throw new Error('無法讀取 Gemini 模型清單（' + r.status + '）：' + msg);
+        }
+        var ids = (j && j.models ? j.models : [])
+          .filter(function (m) {
+            return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0;
+          })
+          .map(function (m) { return String(m.name || '').replace(/^models\//, ''); });
+        _gemCache[cacheKey] = ids;
+        return ids;
+      });
+    });
+  }
+
+  /**
+   * 挑一個可用的 Gemini 模型。
+   * 需求：Google 會淘汰舊模型（gemini-2.0-flash 免費端點 2026-06-01 已關），
+   * 所以「先問清單、再依偏好順序挑」比寫死一個型號耐用得多。
+   */
+  function pickGeminiModel(c, available) {
+    var want = String(c.model || '').trim();
+    /* 老師自己填的型號：在清單裡就直接用（尊重選擇） */
+    if (want && available.indexOf(want) >= 0) return want;
+    /* 偏好順序中第一個存在的 */
+    for (var i = 0; i < GEMINI_PREFERENCE.length; i++) {
+      if (available.indexOf(GEMINI_PREFERENCE[i]) >= 0) return GEMINI_PREFERENCE[i];
+    }
+    /* 都沒有 → 退而求其次：任何名稱含 flash 的（便宜、免費層可用） */
+    var flash = available.filter(function (m) { return /flash/i.test(m) && !/thinking|image|tts|native-audio/i.test(m); });
+    if (flash.length) return flash[0];
+    if (available.length) return available[0];
+    /* 清單空 → 用老師填的或後備值，讓真正的錯誤訊息露出來 */
+    return want || PROVIDERS.gemini.model;
+  }
+
   function callGemini(c, messages) {
     var base = String(c.endpoint || PROVIDERS.gemini.endpoint).replace(/\/+$/, '');
     var sys = messages.filter(function (m) { return m.role === 'system'; })
       .map(function (m) { return m.content; }).join('\n');
     var contents = messages.filter(function (m) { return m.role !== 'system'; })
       .map(function (m) { return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }; });
-    var url = base + '/models/' + encodeURIComponent(c.model || PROVIDERS.gemini.model) +
-      ':generateContent?' + (c.keyQuery || 'key') + '=' + encodeURIComponent(c.apiKey);
     var body = {
       contents: contents,
       generationConfig: { temperature: c.temperature, maxOutputTokens: 8192 }
     };
     if (sys) body.systemInstruction = { parts: [{ text: sys }] };
 
-    return fetch(url, {
-      method: 'POST',
-      cache: 'no-store',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    }).then(function (r) {
-      return r.text().then(function (t) {
-        var j = null;
-        try { j = JSON.parse(t); } catch (e) { }
-        if (!r.ok) {
-          var msg = (j && j.error && (j.error.message || j.error)) || t.slice(0, 300) || ('HTTP ' + r.status);
-          throw new Error('Gemini 回應錯誤（' + r.status + '）：' + msg);
-        }
-        var cand = j && j.candidates && j.candidates[0];
-        var txt = cand && cand.content && cand.content.parts &&
-          cand.content.parts.map(function (p) { return p.text || ''; }).join('');
-        if (!txt) throw new Error('Gemini 回應沒有內容' + (j && j.promptFeedback ? '（' + JSON.stringify(j.promptFeedback).slice(0, 160) + '）' : ''));
-        return { text: txt, model: c.model, usage: j.usageMetadata || null };
+    function send(model) {
+      var url = base + '/models/' + encodeURIComponent(model) +
+        ':generateContent?' + (c.keyQuery || 'key') + '=' + encodeURIComponent(c.apiKey);
+      return fetch(url, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).then(function (r) {
+        return r.text().then(function (t) {
+          var j = null;
+          try { j = JSON.parse(t); } catch (e) { }
+          if (!r.ok) {
+            var msg = (j && j.error && (j.error.message || j.error)) || t.slice(0, 300) || ('HTTP ' + r.status);
+            var err = new Error('Gemini 回應錯誤（' + r.status + '）：' + msg);
+            err.status = r.status;
+            /* 把 Google 的機器可讀原因帶出來（NOT_FOUND / RESOURCE_EXHAUSTED…） */
+            err.reason = (j && j.error && j.error.status) || '';
+            throw err;
+          }
+          var cand = j && j.candidates && j.candidates[0];
+          var txt = cand && cand.content && cand.content.parts &&
+            cand.content.parts.map(function (p) { return p.text || ''; }).join('');
+          if (!txt) {
+            throw new Error('Gemini 回應沒有內容' +
+              (cand && cand.finishReason ? '（finishReason=' + cand.finishReason + '）' : '') +
+              (j && j.promptFeedback ? '（' + JSON.stringify(j.promptFeedback).slice(0, 160) + '）' : ''));
+          }
+          return { text: txt, model: model, usage: j.usageMetadata || null };
+        });
+      });
+    }
+
+    /* ① 先問清單、挑一個能用的型號（清單讀不到就退回老師填的值，照樣送出） */
+    var asked = String(c.model || '').trim();
+    return listGeminiModels(c).catch(function () { return null; }).then(function (available) {
+      var model = available ? pickGeminiModel(c, available) : (asked || PROVIDERS.gemini.model);
+      return send(model).catch(function (e) {
+        /* ② 若老師填的型號已下架（404 NOT_FOUND），自動改用清單裡最新的再試一次。
+              這是「Google 淘汰模型」最常見的症狀，使用者不該為此自己去改設定。 */
+        var isGone = e.status === 404 ||
+          /not found|not supported|no longer available|does not exist/i.test(String(e.message || ''));
+        if (!isGone || !available || !available.length) throw e;
+        var alt = pickGeminiModel({ model: '' }, available);      /* 強制重新挑 */
+        if (!alt || alt === model) throw e;
+        return send(alt).then(function (out) {
+          out.model = alt;
+          out.autoSwitchedFrom = model;
+          return out;
+        });
       });
     });
   }
@@ -462,7 +559,27 @@
       { role: 'system', content: '你是測試用的助理，只回覆指定內容。' },
       { role: 'user', content: '請只回覆兩個字：成功' }
     ], { noFallback: true }).then(function (out) {
-      return { ok: true, text: U.trim(out.text).slice(0, 40), model: out.model, provider: c.provider };
+      return {
+        ok: true, text: U.trim(out.text).slice(0, 40), model: out.model,
+        provider: c.provider, switchedFrom: out.autoSwitchedFrom || ''
+      };
+    });
+  }
+
+  /**
+   * 列出「這把金鑰現在真的能用的 Gemini 模型」。
+   * 給設定頁的「看看有哪些模型」用——Google 淘汰模型時老師能自己確認，
+   * 不必回來問開發者。
+   */
+  function listModels(override) {
+    var c = Object.assign({}, cfg(), override || {});
+    if (!c.apiKey) return Promise.reject(new Error('請先填 API 金鑰'));
+    return listGeminiModels(c).then(function (ids) {
+      /* 好用的排前面（flash 系列），其餘照原順序 */
+      var usable = ids.filter(function (m) { return !/embedding|aqa|imagen|veo|tts|native-audio/i.test(m); });
+      var flash = usable.filter(function (m) { return /flash/i.test(m); });
+      var rest = usable.filter(function (m) { return flash.indexOf(m) < 0; });
+      return { all: usable, preferred: flash.concat(rest), suggested: pickGeminiModel(c, usable) };
     });
   }
 
@@ -477,6 +594,8 @@
     chat: chat,
     run: run,
     ping: ping,
+    listModels: listModels,
+    clearModelCache: clearModelCache,
     packQuiz: packQuiz,
     packText: packText,
     extractJSON: extractJSON,

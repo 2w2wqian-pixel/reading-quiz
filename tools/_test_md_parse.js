@@ -682,9 +682,163 @@ function finish() {
     });
   });
 
+  /* ============================================================
+     Gemini 通道：自動挑模型 / 自動換掉已下架的模型
+     （Google 會淘汰舊模型，寫死型號一定有一天會壞）
+     ============================================================ */
+  const GKEY = 'AIzaTESTKEY_abcdefghij';
+  const _gemClear = () => AI.clearModelCache();
+  function geminiFetch(list, send) {
+    return function (url, opt) {
+      calls.push({ url: url, opt: opt });
+      if (/\/models\?/.test(url)) {
+        return Promise.resolve({
+          ok: true, status: 200,
+          text: () => Promise.resolve(JSON.stringify({
+            models: (typeof list === 'function' ? list() : list).map(id => ({
+              name: 'models/' + id,
+              supportedGenerationMethods: ['generateContent', 'countTokens']
+            }))
+          }))
+        });
+      }
+      return send(url, opt);
+    };
+  }
+  const okSend = (model) => (url) => Promise.resolve({
+    ok: true, status: 200,
+    text: () => Promise.resolve(JSON.stringify({
+      model: model, candidates: [{ content: { parts: [{ text: '好' }] } }],
+      usageMetadata: { totalTokenCount: 7 }
+    }))
+  });
+  function notFound() {
+    return Promise.resolve({
+      ok: false, status: 404,
+      text: () => Promise.resolve(JSON.stringify({
+        error: { code: 404, status: 'NOT_FOUND', message: 'models/gemini-2.0-flash is not found for API version v1beta' }
+      }))
+    });
+  }
+
+  t('Gemini：會先問 ListModels，再挑偏好清單中最新可用的模型', () => {
+    calls.length = 0;
+    /* 清單裡沒有 flash-latest / 3-preview，但有 2.5-flash → 應挑 2.5-flash */
+    sandbox.fetch = geminiFetch(['gemini-2.0-flash', 'gemini-2.5-flash', 'text-embedding-004'], okSend('gemini-2.5-flash'));
+    _gemClear();
+    S.set({ ai: { enabled: true, provider: 'gemini', endpoint: '', model: '', apiKey: GKEY } });
+    return AI.chat([{ role: 'user', content: 'hi' }]).then((out) => {
+      eq(out.model, 'gemini-2.5-flash');
+      /* 第一次是 ListModels，第二次才是 generateContent */
+      has(calls[0].url, '/models?');
+      has(calls[1].url, 'models/gemini-2.5-flash:generateContent');
+    });
+  });
+
+  t('Gemini：偏好清單優先選 gemini-flash-latest（存在就用最新的）', () => {
+    calls.length = 0;
+    sandbox.fetch = geminiFetch(['gemini-2.5-flash', 'gemini-flash-latest'], okSend('gemini-flash-latest'));
+    _gemClear();
+    S.set({ ai: { model: '', apiKey: GKEY } });
+    return AI.chat([{ role: 'user', content: 'hi' }]).then((out) => {
+      eq(out.model, 'gemini-flash-latest');
+    });
+  });
+
+  t('Gemini：老師自己填的型號若在清單中，會被尊重', () => {
+    calls.length = 0;
+    sandbox.fetch = geminiFetch(['gemini-2.5-flash', 'gemini-2.5-flash-lite'], okSend('gemini-2.5-flash-lite'));
+    _gemClear();
+    S.set({ ai: { model: 'gemini-2.5-flash-lite', apiKey: GKEY } });
+    return AI.chat([{ role: 'user', content: 'hi' }]).then((out) => {
+      eq(out.model, 'gemini-2.5-flash-lite');
+      has(calls[1].url, 'models/gemini-2.5-flash-lite');
+    });
+  });
+
+  t('🔴 Gemini：型號已下架（404）→ 自動改用清單裡最新可用的', () => {
+    calls.length = 0;
+    let first = true;
+    sandbox.fetch = geminiFetch(['gemini-2.5-flash'],
+      (url) => {
+        /* 第一次用老師填的舊型號 → 404；之後成功 */
+        if (first) { first = false; return notFound(); }
+        return okSend('gemini-2.5-flash')(url);
+      });
+    _gemClear();
+    S.set({ ai: { model: 'gemini-2.0-flash', apiKey: GKEY } });
+    return AI.chat([{ role: 'user', content: 'hi' }]).then((out) => {
+      eq(out.model, 'gemini-2.5-flash', '應自動換成清單中可用的');
+      eq(out.autoSwitchedFrom, 'gemini-2.0-flash', '要留下「原本用哪個」的痕跡');
+      eq(calls.length, 3, 'ListModels + 失敗一次 + 成功一次');
+    });
+  });
+
+  t('Gemini：ListModels 失敗（金鑰問題）→ 不吞錯，把真正的原因丟出來', () => {
+    calls.length = 0;
+    sandbox.fetch = function (url, opt) {
+      calls.push({ url: url, opt: opt });
+      if (/\/models\?/.test(url)) {
+        return Promise.resolve({
+          ok: false, status: 400,
+          text: () => Promise.resolve(JSON.stringify({ error: { message: 'API key not valid. Please pass a valid API key.' } }))
+        });
+      }
+      /* 清單讀不到時還是要照著老師填的型號送一次，讓真正的錯誤浮出來 */
+      return Promise.resolve({
+        ok: false, status: 400,
+        text: () => Promise.resolve(JSON.stringify({ error: { message: 'API key not valid. Please pass a valid API key.' } }))
+      });
+    };
+    _gemClear();
+    S.set({ ai: { model: 'gemini-2.5-flash', apiKey: 'BAD' } });
+    return AI.chat([{ role: 'user', content: 'hi' }]).then(
+      () => { throw new Error('應該要 reject'); },
+      (e) => { has(e.message, 'API key not valid', '錯誤訊息要原樣帶出'); });
+  });
+
+  t('Gemini：4096 以上回應被截斷時，finishReason 會出現在錯誤訊息裡', () => {
+    calls.length = 0;
+    sandbox.fetch = geminiFetch(['gemini-2.5-flash'], (url) => Promise.resolve({
+      ok: true, status: 200,
+      text: () => Promise.resolve(JSON.stringify({
+        candidates: [{ finishReason: 'MAX_TOKENS', content: { parts: [] } }]
+      }))
+    }));
+    _gemClear();
+    S.set({ ai: { model: '', apiKey: GKEY } });
+    return AI.chat([{ role: 'user', content: 'hi' }]).then(
+      () => { throw new Error('應該要 reject'); },
+      (e) => { has(e.message, 'MAX_TOKENS', '要告訴老師是被長度截斷，不是模型壞了'); });
+  });
+
+  t('AI.listModels() 回傳可用清單與建議型號（過濾掉 embedding／imagen）', () => {
+    calls.length = 0;
+    sandbox.fetch = geminiFetch(
+      ['text-embedding-004', 'imagen-3.0-generate', 'gemini-2.5-flash', 'gemini-2.5-pro'], okSend('x'));
+    _gemClear();
+    S.set({ ai: { model: '', apiKey: GKEY } });
+    return AI.listModels().then((r) => {
+      ok(r.all.indexOf('text-embedding-004') < 0, 'embedding 應被濾掉');
+      ok(r.all.indexOf('imagen-3.0-generate') < 0, 'imagen 應被濾掉');
+      ok(r.preferred.indexOf('gemini-2.5-flash') >= 0);
+      eq(r.suggested, 'gemini-2.5-flash');
+    });
+  });
+
+  t('AI.listModels() 沒金鑰時直接 reject', () => {
+    return AI.listModels({ apiKey: '' }).then(
+      () => { throw new Error('應該要 reject'); },
+      (e) => { has(e.message, '金鑰'); });
+  });
+
+  t('Gemini 端點預設值沒被改壞（仍指向 generativelanguage）', () => {
+    has(AI.PROVIDERS.gemini.endpoint, 'generativelanguage.googleapis.com');
+    has(AI.PROVIDERS.gemini.endpoint, 'v1beta');
+  });
+
   report();
 }
-
 function report() {
   console.log('');
   console.log('通過 ' + pass + '／' + (pass + fail));

@@ -227,6 +227,10 @@
        authDomain 只有「Google 帳號登入」用到（學生按 Google 登入時才載入 SDK），
        留空不影響既有的匿名通道與資料庫讀寫。 */
     fb: { enabled: false, dbUrl: '', apiKey: '', classCode: '', authDomain: '' },
+    /* AI 大模型（老師端「設定 → AI 助理」）
+       金鑰只存在這台裝置的 localStorage，不會寫進 repo／雲端。
+       詳細欄位語意見 core/ai.js 的 DEFAULT_AI。 */
+    ai: { enabled: false, provider: 'direct', endpoint: '', model: '', apiKey: '', keyQuery: 'key', viaHook: false },
     /* 自助註冊的班級代碼（與雲端命名空間 classCode 是兩件事，見 teacher.js 說明） */
     classCode: '',
     /* 雲端草稿 */
@@ -256,6 +260,7 @@
         gh: Object.assign({}, DEFAULT_SETTINGS.gh, s.gh || {}),
         hook: Object.assign({}, DEFAULT_SETTINGS.hook, s.hook || {}),
         fb: Object.assign({}, DEFAULT_SETTINGS.fb, s.fb || {}),
+        ai: Object.assign({}, DEFAULT_SETTINGS.ai, s.ai || {}),
         /* ⚠ 這裡**不能**寫成 Object.assign({}, POLICY_KEYS, s.policy)：
            POLICY_KEYS 是「預設值」，不是「已儲存的值」。先併進去的話，
            沒被改過的開關也會長得像「使用者存過的偏好」，
@@ -282,6 +287,7 @@
       if (patch.gh) next.gh = Object.assign({}, cur.gh, patch.gh);
       if (patch.hook) next.hook = Object.assign({}, cur.hook, patch.hook);
       if (patch.fb) next.fb = Object.assign({}, cur.fb, patch.fb);
+      if (patch.ai) next.ai = Object.assign({}, cur.ai, patch.ai);
       /* 開關一律寫進 policy；攤平的舊欄位順手清掉，避免兩份定義並存 */
       var pol = Object.assign({}, cur.policy, patch.policy || {});
       Object.keys(POLICY_KEYS).forEach(function (k) {

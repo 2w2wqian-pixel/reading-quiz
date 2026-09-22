@@ -198,6 +198,7 @@ select.input{font-family:var(--font-ui)}
 .tag.sky{background:#E9F4FB;border-color:#B7D8EE;color:#3A7099}
 .tag.lav{background:#F0EBFA;border-color:#CDC0EC;color:#6A51A8}
 .tag.gray{background:#F4F1EC;border-color:#E2DACE;color:#8A7F70}
+.tag.warn{background:#FFF6E0;border-color:#F0D69E;color:#8A6316}
 
 /* ---------- Tables ---------- */
 table.tbl{width:100%;border-collapse:collapse;font-size:14.5px;background:var(--paper)}
@@ -516,6 +517,7 @@ h1,h2,h3,h4{font-family:var(--font-ui);letter-spacing:.02em}
 .tag.sky{background:#E4EDF2;border-color:#CFDFE7;color:#4F6B7C}
 .tag.lav{background:#EFEBE4;border-color:#DED7CB;color:#7A7065}
 .tag.gray{background:#F1ECE3;border-color:#E3DBCE;color:#7C7266}
+.tag.warn{background:#F7EFDC;border-color:#E8D8B4;color:#8A6A2E}
 
 /* ---------- 題目卡 ---------- */
 .q{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);

@@ -59,7 +59,13 @@
     '\u24B6': 'A', '\u24B7': 'B', '\u24B8': 'C', '\u24B9': 'D', '\u24BA': 'E'
   };
 
-  var RE_QNO   = /^[\s\u3000]*(\d{1,2})[\s\u3000]*([^\d\s])/;
+  /* 題號起手：數字 + 可選的中間符號（. 、 ) ．） + 一個「內容起頭字元」。
+     中間符號是 Markdown／文字版匯入的關鍵：docx 是「1 題目」（數字後接空白），
+     但文字版幾乎一定寫成「1. 題目」「1、題目」；沒有把符號吃掉的話，
+     內容起頭字元會變成「.」而過不了 RE_QFIRST，整題消失（實測踩雷）。
+     `(1)` 這種括號題號則交由 RE_QPAREN 另管，維持原行為。 */
+  var RE_QNO   = /^[\s\u3000]*(\d{1,2})[\s\u3000]*[.、．。)）]?[\s\u3000]*([^\d\s.、．。)）])/;
+  var RE_QNO_STRIP = /^[\s\u3000]*\d{1,2}[\s\u3000]*[.、．。)）]?[\s\u3000]*/;
   var RE_MARKS = /[（(]\s*\d+(?:\.\d+)?\s*分\s*[）)]/;
   var RE_PASS  = /^[\s\u3000]*第[一二三四五六七八九十]+篇[\s\u3000]*$/;
   var RE_END   = /^[\s\u3000]*[—–－]\s*試\s*卷\s*完\s*[—–－][\s\u3000]*$/;
@@ -68,6 +74,10 @@
   var RE_REF   = /^[\s\u3000]*(參考答案|學生言之成理|以下為參考)/;
   /* 甲部／乙部 等分卷標記（注意：文中多為全形空格 U+3000；CJK 後無 \b 詞界） */
   var RE_SECTION = /^[\s\u3000]*[甲乙丙丁戊己庚辛壬癸][\s\u3000]*部/;
+  /* 純文字／Markdown 來源的答案行：md-parser 前處理時會轉成「★ 3. B」。
+     ★ 不在 RE_QNO 的「數字開頭」規則內，所以既不會被當成題號、
+     也不會被當成題幹被吞掉，只會靜靜地留在原地等 isTeacher 來取。 */
+  var RE_MDANS = /^[\s\u3000]*[★☆✔✓√☑]/;
   /* 引文（給學生看的參考文字，不是答案）的強信號 */
   function isQuoteLike(b) {
     if (b.kind !== 'p') return false;
@@ -520,7 +530,7 @@
     /* 強信號：有分數或問號 */
     if (RE_MARKS.test(t) || t.indexOf('？') >= 0 || t.indexOf('?') >= 0) return true;
     /* 次級信號：去掉題號後的句子開頭含常見「題目指令動詞」 */
-    var body = t.replace(/^[\s\u3000]*\d{1,2}[\s　]*/, '').slice(0, 8);
+    var body = t.replace(RE_QNO_STRIP, '').slice(0, 8);
     if (RE_QVERB.test(body)) return true;
     return false;
   }
@@ -553,10 +563,43 @@
       if (paras[j].node === endNode) { idx1 = j; break; }
     }
     if (idx1 < 0) idx1 = paras.length;
+    return passagesFromBlocks(paras.slice(idx0 + 1, idx1), true);
+  }
 
+  /**
+   * 從「已排序的區塊陣列」抽出文章。
+   * 供純文字／Markdown 來源使用（那些來源沒有 DOM 節點，paras 為空，
+   * 用 node 比對的 extractPassages 會永遠回空）。
+   * @param {Array} blocks  文章範圍內的區塊（已在文件順序）
+   * @param {boolean} skipNestedBlocks  true ＝ 傳進來的已是攤平清單，直接逐段處理
+   */
+  function passagesFromBlocks(blocks, skipNestedBlocks) {
+    var body = [], j;
+    for (j = 0; j < blocks.length; j++) {
+      var bb = blocks[j];
+      if (!bb) continue;
+      if (bb.kind === 'tr') {
+        /* 表格裡的文章（行號欄＋內文）→ 取最長的儲存格 */
+        var best = '', bl = 0;
+        (bb.cells || []).forEach(function (c) {
+          var v = U.trim(c.visible || c.text || '');
+          if (/^\d{1,4}$/.test(v)) return;
+          if (v.length > bl) { bl = v.length; best = v; }
+        });
+        if (bl >= 40) body.push({ text: best, html: U.esc(best) });
+        continue;
+      }
+      if (bb.kind !== 'p') continue;
+      body.push(bb);
+    }
+    return buildPassagesFromList(body);
+  }
+
+  /** 逐段組裝文章（與 extractPassages 的規則完全一致） */
+  function buildPassagesFromList(list) {
     var out = [], cur = null, inNotes = false, notes = [];
-    for (var k = idx0 + 1; k < idx1; k++) {
-      var t = U.trim(paras[k].text);
+    for (var k = 0; k < list.length; k++) {
+      var t = U.trim(list[k].text);
       if (!t) continue;
       if (/^[\s\u3000]*考\s*生\s*須\s*知/.test(t)) continue;
       if (/^[（(][一二三四五六七八九十][）)]/.test(t) && /閱讀能力考材|依據|刪改/.test(t)) continue;
@@ -568,7 +611,10 @@
         continue;
       }
       if (/^[\s\u3000]*注\s*釋[\s\u3000]*$/.test(t)) { inNotes = true; continue; }
-      if (!cur) continue;
+      if (!cur) {
+        /* 沒有「第X篇」標記 → 自開第一篇（純文字來源常常不寫） */
+        cur = { id: 'p1', title: '第一篇', paragraphs: [], notes: [] };
+      }
       if (t.length >= 25) { cur.paragraphs.push(t); continue; }
       if (inNotes && /^\[\d+\]/.test(t)) { notes.push(t); continue; }
       if (/^[\(（]?\d+[\)）]?[\s\u3000]*$/.test(t)) continue;   // (1) (2) 段號
@@ -593,7 +639,7 @@
       if (!isQStart(b)) { i++; continue; }
 
       var no = qno(b);
-      var stemRaw = b.text.replace(/^[\s\u3000]*\d{1,2}[\s\u3000]*/, '');
+      var stemRaw = b.text.replace(RE_QNO_STRIP, '');
       var sk = U.stripSkills(stemRaw);
       var q = {
         no: no,
@@ -620,6 +666,41 @@
            導致分卷標記被跳過、後續題目全被誤歸到前一個 section */
         if (isQStart(nb) || RE_SECTION.test(nb.text) ||
             (nb.kind === 'p' && nb.text.length <= 20 && RE_PASS.test(nb.text))) break;
+        /* 純文字／Markdown 來源的答案行（前處理時被轉成「★ …」）：
+           這是「這一題的答案」，不是題幹的一部分 → 在此收束，
+           但要把「答案行本身」與其後緊接的「答案分析：…」一起吃進來，
+           否則解析會落在題目範圍之外而永遠收不到（實測踩雷）。 */
+        if (nb.kind === 'p' && RE_MDANS.test(nb.text)) {
+          /* 答案行的題號必須和本題一致。純文字／Markdown 的答案常常
+             **整批集中在最後**（★ 1. B ／ ★ 3. A），所以遇到「別題的答案」
+             不能直接 break（那會連自己的答案都掃不到），要往後找自己的那行。 */
+          var abody = U.trim(nb.text.replace(/^[★☆✔✓√☑]\s*/, ''));
+          var am = abody.match(/^(\d{1,2})[\s\u3000]*[.、．。)）]?[\s\u3000]*(.*)$/);
+          var aNo = am ? parseInt(am[1], 10) : null;
+          if (aNo != null && aNo !== no) { j++; continue; }   /* 別題的答案 → 跳過 */
+          if (aNo != null) abody = U.trim(am[2]) || abody;
+          if (q.mdAnswer) { j++; continue; }                   /* 本題已取過答案 */
+          q.mdAnswer = abody;
+          var mj = j + 1;
+          while (mj < to) {
+            var mb = blocks[mj];
+            if (mb.kind !== 'p') break;
+            var mt = U.trim(mb.text);
+            if (!mt) break;
+            if (isQStart(mb) || RE_SECTION.test(mb.text) || RE_MDANS.test(mb.text)) break;
+            if (RE_ANAL.test(mt)) {
+              q.mdExplanation = (q.mdExplanation ? q.mdExplanation + '\n' : '') + mt.replace(RE_ANAL, '');
+              mj++; continue;
+            }
+            if (isRefText(mt)) {
+              q.quotes.push(mt);
+              q.quotesHtml.push(mb.html || U.esc(mt));
+            }
+            mj++;
+          }
+          j = mj;
+          continue;
+        }
 
         if (nb.kind === 'tr') {
           if (isGridRow(nb)) {
@@ -684,6 +765,9 @@
       /* 教師版：紅字即答案 */
       if (isTeacher) {
         var reds = [];
+        /* 純文字／Markdown 來源：答案與解析在收集階段就被掛上來了 */
+        if (q.mdAnswer) reds.push(q.mdAnswer);
+        if (q.mdExplanation && !q.explanation) q.explanation = q.mdExplanation;
         for (var r = i + 1; r < j; r++) {
           var rb = blocks[r];
           if (rb.kind === 'p' && RE_ANAL.test(rb.text)) continue;
@@ -1052,6 +1136,17 @@
           return !RE_REF.test(x) && !RE_ANAL.test(x);
         });
       }
+      /* 純文字／Markdown 匯入時，答案行後面常常緊接著「答案分析：…」；
+         那行已經被收進 explanation，不要再當成答案。
+         （不加這一步的話 q.explanation 先被清掉，答案反而變成整句解析） */
+      if (t.explanation) {
+        var exSet = {};
+        String(t.explanation).split('\n').forEach(function (x) {
+          var k = U.trim(x).replace(/^[★☆✔✓√☑]\s*/, '');
+          if (k) exSet[k] = 1;
+        });
+        ansList = ansList.filter(function (x) { return !exSet[U.trim(x)]; });
+      }
       /* 去掉「學生言之成理即可／以下為參考答案」這類引導語 */
       ansList = ansList.filter(function (x) {
         return !/^(學生言之成理|以下為參考答案|言之成理即可)/.test(U.trim(x)) && U.trim(x);
@@ -1132,6 +1227,25 @@
     if (!keys.length) {
       m = /答\s*案\s*(?:為|是)?[\s:：]*[\(（]?([A-Ha-h])/.exec(s);
       if (m) keys = [m[1].toUpperCase()];
+    }
+    /* 純文字／Markdown 匯入最常見的形式：整行就是「3. B」或只有「B」。
+       ① 「n. X」→ 取 X（選擇題的答案鍵）
+       ② 整行只有一個字母 → 就是答案 */
+    if (!keys.length) {
+      var lines = s.split('\n');
+      for (var i = 0; i < lines.length; i++) {
+        var ln = U.trim(lines[i]);
+        if (!ln) continue;
+        var lm = ln.match(/^\d{1,2}[\s\u3000]*[.、．。)）]?[\s\u3000]*([A-Ha-h])[\s\u3000]*[.、．。)）]?[\s\u3000]*$/);
+        if (lm) { keys = [lm[1].toUpperCase()]; break; }
+      }
+      if (!keys.length) {
+        for (var j = 0; j < lines.length; j++) {
+          var l2 = U.trim(lines[j]);
+          var sm = l2.match(/^[\(（]?([A-Ha-h])[\)）]?[\s\u3000]*$/);
+          if (sm) { keys = [sm[1].toUpperCase()]; break; }
+        }
+      }
     }
     return keys
       .filter(function (k) { return bad.indexOf(k) < 0; })
@@ -1321,12 +1435,21 @@
             return;
           }
           var tokens = [{ type: 'text', v: t, red: !!opt.red }];
+          var opts = extractOptions(tokens);
+          /* 純文字／Markdown 的選項是「A. 文字」而不是 Wingdings 符號，
+             extractOptions 只認符號 → 這裡補上「行首字母＋分隔符」的辨識，
+             否則整組選項會被當成題幹文字而消失。 */
+          if (!opts.length) {
+            var om = t.match(/^[\(（]?([A-H])[\)）]?\s*[.、)．:：]\s*(\S[\s\S]*)$/);
+            if (!om) om = t.match(/^[\(（]([A-H])[\)）]\s*(\S[\s\S]*)$/);
+            if (om && U.trim(om[2])) opts = [{ key: om[1], text: U.trim(om[2]), red: !!opt.red }];
+          }
           out.push({
             kind: 'p', node: null, tokens: tokens,
             text: t, html: U.esc(t),
             red: !!opt.red,
             letters: tokensLetters(tokens),
-            options: extractOptions(tokens)
+            options: opts
           });
         });
       });
@@ -1416,6 +1539,18 @@
         }
         var endNode = doneIdx > 0 ? top[doneIdx].node : null;
         passages = extractPassages(paras, top[matIdx].node, endNode);
+        /* 純文字／Markdown 來源沒有 DOM 節點（node 為 null）→
+           extractPassages 用 node 比對會找不到，改用「位置切片」。 */
+        if (!passages.length) {
+          var cut = doneIdx > matIdx ? doneIdx : top.length;
+          /* 「第X篇」是文章內的分段標記，不是「文章結束」→ 只到「－完－」為止 */
+          if (doneIdx < 0) {
+            var stopIdx = findIndex(top, function (b, k) { return k > matIdx && isShort(b) && RE_END.test(b.text); });
+            if (stopIdx > matIdx) cut = stopIdx;
+          }
+          passages = passagesFromBlocks(top.slice(matIdx + 1, cut));
+          if (passages.length) passages.forEach(function (p, pi) { p.id = 'p' + (pi + 1); });
+        }
       }
       if (!passages.length) {
         warnings.push('未能擷取文章，請在上傳後手動貼上或修正。');
@@ -1450,6 +1585,24 @@
         sFrom = 0;
         sEnd = findIndex(top, function (b, k) { return k >= sFrom && isShort(b) && RE_END.test(b.text); });
         if (sEnd < 0) sEnd = top.length;
+        /* 純文字／Markdown 來源：文章與題目的先後順序和紙本一樣時，
+           「－完－」只代表「文章結束」，後面還有題目（甚至還有第二篇文章），
+           所以要把結束點往後推到真正的教師版／試卷完，否則題目會全部消失。 */
+        if (sEnd < top.length) {
+          var afterEnd = top.slice(sEnd + 1);
+          var hasMore = afterEnd.some(function (b2) {
+            return (b2.kind === 'p' && isQStart(b2)) ||
+              (b2.kind === 'p' && b2.text.length <= 20 && RE_PASS.test(b2.text)) ||
+              (b2.kind === 'p' && RE_SECTION.test(b2.text));
+          });
+          if (hasMore) {
+            var hardEnd = findIndex(top, function (b, k) {
+              return k > sEnd && b.kind === 'p' && isShort(b) &&
+                (RE_END.test(b.text) || RE_DONE.test(b.text) || RE_MDANS.test(b.text));
+            });
+            sEnd = hardEnd > sEnd ? hardEnd : top.length;
+          }
+        }
       }
       var studentQs = isEnglish
         ? collectEnglish(top, sFrom + 1, sEnd, false)
@@ -1470,6 +1623,11 @@
         var tEnd = findIndex(top, function (b, k) { return k > tFrom && isShort(b) && RE_END.test(b.text); });
         if (tEnd < 0) tEnd = top.length;
         teacherQs = collectQuestions(top, tFrom, tEnd, true);
+      } else if (top.some(function (b) { return b.kind === 'p' && RE_MDANS.test(b.text); })) {
+        /* 純文字／Markdown 來源：答案用「★ 3. B」逐題標在題目後面，
+           沒有傳統的「教師版」大區段 → 讓整個範圍都當教師版掃，
+           collectQuestions 只會撿走 ★ 行，題幹不會被誤認成答案。 */
+        teacherQs = collectQuestions(top, sFrom, sEnd, true);
       } else {
         warnings.push('找不到「教師版」區段：本卷可能只有學生版，答案需自行填寫或另外上傳教師卷。');
       }

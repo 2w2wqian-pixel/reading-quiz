@@ -51,14 +51,19 @@ var WRITE_KEY = '';
    而且**不需要 VPN**。
 
    設定方式：Apps Script → 專案設定 → 指令碼屬性，新增：
-     AI_PROVIDER  gemini | direct | openrouter   （預設 direct）
+     AI_PROVIDER  deepseek | gemini | direct | openrouter   （預設 direct）
      AI_ENDPOINT  留空即可（會依 provider 自動決定）
-     AI_MODEL     留空即可（gemini 會自動挑最新可用的 flash）
+     AI_MODEL     留空即可（gemini／deepseek 都會自動帶入可用的型號）
      AI_KEY       你的金鑰
    另外把 AI_ENABLED 設成 true 才會生效（避免沒設定就被打）。
 
+   ★ 香港／中國大陸最推薦：AI_PROVIDER = deepseek
+     DeepSeek 不擋香港 IP，金鑰在 platform.deepseek.com 就能申請，
+     完全不必 VPN、不必經中間服務（OpenRouter）。
+     ⚠ 模型名不要填 deepseek-chat／deepseek-reasoner，官方已於 2026-07-24 停用。
+
    若要拿 Gemini 金鑰但人在香港：可以先請在支援地區的朋友代為申請，
-   或直接用 OpenRouter／DeepSeek 的金鑰（這兩家在香港可直接申請）。
+   或直接用 DeepSeek／OpenRouter 的金鑰（這兩家在香港可直接申請）。
    ============================================================ */
 var AI_ENABLED = false;
 
@@ -129,6 +134,11 @@ function aiChat_(d) {
   } else if (provider === 'openrouter') {
     if (!endpoint) endpoint = 'https://openrouter.ai/api/v1';
     if (!model) model = 'google/gemini-2.5-flash';
+  } else if (provider === 'deepseek') {
+    /* 香港／中國大陸最省事：不擋 IP、直連、不必中間服務 */
+    if (!endpoint) endpoint = 'https://api.deepseek.com';
+    /* ⚠ deepseek-chat／deepseek-reasoner 已於 2026-07-24 停用 */
+    if (!model) model = 'deepseek-v4-flash';
   } else {
     if (!endpoint) endpoint = 'https://api.openai.com/v1';
   }
@@ -227,9 +237,31 @@ function doPost(e) {
       }
     }
 
+    /* 刪除（老師刪試卷時會用到）。
+       ⚠️ 以前**完全沒有這個動作**：前端的 Cloud.del 在沒有 Firebase 時直接回傳「成功」，
+       於是試卷永遠留在試算表裡 —— 症狀是「按了刪除，試卷還在清單裡」。
+       只比對 id 欄（不篩 type）：id 本身已經是「type::主鍵」的合成字串，不會撞號，
+       而 type 欄在不同版本可能寫成 quiz／quizzes。 */
+    if (d.action === 'del') {
+      if (WRITE_KEY && d.key !== WRITE_KEY) return jsonOut_({ ok: false, error: 'bad key' });
+      var keys = (d.keys && d.keys.length) ? d.keys : [d.id];
+      var wanted = {};
+      for (var w = 0; w < keys.length; w++) if (keys[w]) wanted[String(keys[w])] = 1;
+      var shDel = getSheet_();
+      var lastDel = shDel.getLastRow();
+      var removed = 0;
+      if (lastDel > 1) {
+        var col = shDel.getRange(2, 2, lastDel - 1, 1).getValues();
+        /* 由下往上刪，刪掉一列才不會讓後面的列號位移 */
+        for (var i = col.length - 1; i >= 0; i--) {
+          if (wanted[String(col[i][0])] === 1) { shDel.deleteRow(i + 2); removed++; }
+        }
+      }
+      return jsonOut_({ ok: true, removed: removed });
+    }
+
     if (WRITE_KEY && d.key !== WRITE_KEY) return jsonOut_({ ok: false, error: 'bad key' });
     if (!d.type || !d.id) return jsonOut_({ ok: false, error: 'missing type/id' });
-
     /* 自助註冊要檢查班級代碼 */
     if (d.type === 'register' && CLASS_CODE && d.classCode !== CLASS_CODE) {
       return jsonOut_({ ok: false, error: 'class code mismatch' });

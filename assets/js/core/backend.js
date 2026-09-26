@@ -338,10 +338,18 @@
       }).then(function (r) { if (!r.ok) throw new Error('Firebase 寫入失敗 ' + r.status); return true; });
     },
     del: function (p) {
-      if (!Firebase.ok()) return Promise.resolve(true);
+      if (!Firebase.ok()) return Promise.reject(new Error('尚未設定 Firebase'));
       return Firebase.signIn().then(function (t) {
         return fetch(Firebase._url(Firebase.path(p), t), { method: 'DELETE' });
-      }).then(function () { return true; }).catch(function () { return false; });
+      }).then(function (r) {
+        /* 🔴 以前這裡不看 r.ok，一律回傳 true —— 401（規則拒絕）也會被當成「刪除成功」，
+           於是 UI 說「已刪除」、資料其實還在。這正是「按了刪除還在清單裡」的來源之一。
+           404 例外：本來就沒有那一筆，視為成功。 */
+        if (r.status === 404) return true;
+        if (r.status === 401) throw new Error('Realtime Database 規則拒絕刪除（401）：請把規則設為 auth != null');
+        if (!r.ok) throw new Error('Firebase 刪除失敗 ' + r.status);
+        return true;
+      });
     },
     /**
      * 局部更新（HTTP PATCH）：只送要改的欄位，未提供的欄位保持原值。
@@ -772,9 +780,33 @@
       });
     },
 
-    del: function (type, id) {
+    /**
+     * 刪一筆雲端紀錄。
+     * 🔴 以前這裡只認 Firebase，其餘一律 `Promise.resolve(true)`——
+     *    「沒做任何事卻回報成功」。用 Apps Script 當雲端的老師因此永遠刪不掉雲端副本，
+     *    而雲端副本就是「試卷管理」清單的來源之一 → 按了刪除，列還在。
+     *    Apps Script 那條路現在會送 `action:'del'`（見 tools/apps-script.gs 的 doPost）。
+     *    真的沒有雲端可刪時 **reject**，不要假裝成功。
+     */
+    del: function (type, id, opt) {
+      opt = opt || {};
       if (Firebase.ok()) return Firebase.del(type + '/' + safeKey(id));
-      return Promise.resolve(true);
+      if (Hook.ok()) {
+        /* Sheet 的主鍵是「type::主鍵」的合成字串，而不同版本的 type 可能寫成 quiz／quizzes
+           → 由呼叫端把「可能的形式」列出來（opt.keys），不要在這裡猜字串。
+           （曾經用 `type.replace(/s$/, '')` 想還原單數，結果把 quizzes 變成 quizze。） */
+        var keys = (Array.isArray(opt.keys) && opt.keys.length)
+          ? opt.keys.slice()
+          : [String(id), String(type) + '::' + String(id)];
+        return Hook.post({
+          action: 'del',
+          type: opt.sheetType || type,
+          id: id,
+          keys: keys,
+          ts: U.nowISO()
+        }).then(function () { return true; });
+      }
+      return Promise.reject(new Error('尚未設定雲端（Firebase 或收集端網址）'));
     },
 
     test: function () {
@@ -996,6 +1028,74 @@
   }
 
   /* ============================================================
+     ★ 已刪除試卷的「墓碑」清單
+     ------------------------------------------------------------
+     刪除一份試卷要同時清三個地方：本機 IndexedDB、雲端清單、repo 的 index.json。
+     任何**遠端**通道失敗（Token 過期、沒設定 GitHub、Apps Script 沒開刪除），
+     被刪掉的試卷就會繼續出現在老師的「試卷管理」——
+     老師的體感是「我明明按了刪除，它還在」，而且再按一次也刪不掉，
+     因為本機那份已經不見了，清單上的列其實來自遠端。
+
+     所以：按下刪除時先在本機立一個墓碑，listQuizzes 一律把墓碑上的 id 濾掉。
+     遠端全部清乾淨 → 墓碑結案（pending:false，不再影響任何事）。
+     遠端有殘留 → 墓碑留著並標 pending，UI 才說得出「還有幾份沒清乾淨」。
+     重新「發佈」同一份會自動撤銷墓碑（復活）。
+     ============================================================ */
+  var TOMB_KEY = 'deletedQuizzes';
+  var Tomb = {
+    list: function () {
+      /* Store 的存取一律包在 then 裡：測試環境或舊版 store 若沒有 kv，
+         會變成 rejected promise（可以 catch）而不是同步 throw。 */
+      return Promise.resolve()
+        .then(function () { return Store.kv.get(TOMB_KEY, []); })
+        .catch(function () { return []; })
+        .then(function (v) {
+          return Array.isArray(v) ? v.filter(function (x) { return x && x.id; }) : [];
+        });
+    },
+    /** 只回 id，給 listQuizzes 做過濾（最常見的用途） */
+    ids: function () {
+      return Tomb.list().then(function (l) { return l.map(function (x) { return x.id; }); });
+    },
+    mark: function (id, info) {
+      info = info || {};
+      return Tomb.list().then(function (l) {
+        var next = l.filter(function (x) { return x.id !== id; });
+        next.push({ id: id, at: info.at || U.nowISO(), pending: true });
+        return Store.kv.set(TOMB_KEY, next);
+      });
+    },
+    /** 遠端清乾淨了 → 結案（保留紀錄，方便日後追查，但不再顯示為待處理） */
+    resolve: function (id) {
+      return Tomb.list().then(function (l) {
+        var hit = false;
+        var next = l.map(function (x) {
+          if (x.id !== id) return x;
+          hit = true;
+          return Object.assign({}, x, { pending: false });
+        });
+        return hit ? Store.kv.set(TOMB_KEY, next) : true;
+      });
+    },
+    /** 整筆撤銷（重新發佈同一份試卷時用） */
+    unmark: function (id) {
+      return Tomb.list().then(function (l) {
+        var next = l.filter(function (x) { return x.id !== id; });
+        return next.length === l.length ? true : Store.kv.set(TOMB_KEY, next);
+      });
+    },
+    /** 一次撤銷多筆（清掃器成功刪掉殘留檔後呼叫） */
+    forget: function (ids) {
+      var set = {};
+      (ids || []).forEach(function (x) { set[x] = 1; });
+      return Tomb.list().then(function (l) {
+        var next = l.filter(function (x) { return !set[x.id]; });
+        return next.length === l.length ? true : Store.kv.set(TOMB_KEY, next);
+      });
+    }
+  };
+
+  /* ============================================================
      Backend 統一介面
      ============================================================ */
   var Backend = {
@@ -1013,19 +1113,34 @@
         m.published = true;
         return m;
       }
+      function toMetas(list) { return (list || []).map(meta).filter(Boolean); }
+
       if (Firebase.ok()) {
-        return Firebase.get('quizzesIndex').then(function (j) {
-          if (Array.isArray(j) && j.length) {
-            return j.map(function (m) {
+        return Firebase.getStrict('quizzesIndex').then(function (j) {
+          /* RTDB 可能把陣列存成物件（鍵為 0,1,2…），也可能回空物件 →
+             一律用 arrayify 收斂，不要用 Array.isArray 判斷。 */
+          var idx = arrayify(j, 'quizzesIndex');
+          if (idx.length) {
+            return idx.map(function (m) {
               return (m && m.id) ? Object.assign({}, m, { published: true, _src: 'cloud' }) : null;
             }).filter(Boolean);
           }
-          return Cloud.getAll('quiz').then(function (list) { return (list || []).map(meta).filter(Boolean); });
-        }).catch(function () { return []; });
+          /* 沒有清單（舊資料）→ 直接掃節點自己組 meta。
+             ⚠ 節點是 `quizzes`（複數），要跟 publishQuiz 寫入的位置一致；
+             以前這裡讀的是單數 `quiz`，那條退路其實永遠掃不到東西。 */
+          return Firebase.getStrict('quizzes').then(function (o) {
+            if (!o) return [];
+            return toMetas(Object.keys(o).map(function (k) { return o[k]; }));
+          });
+        }).catch(function () {
+          /* Firebase 讀不到（規則拒絕／網路）→ 退到 Apps Script，
+             不要讓雲端清單整組消失。 */
+          if (Hook.ok()) return Cloud.getAll('quiz').then(toMetas).catch(function () { return []; });
+          return [];
+        });
       }
       if (Hook.ok()) {
-        return Cloud.getAll('quiz').then(function (list) { return (list || []).map(meta).filter(Boolean); })
-          .catch(function () { return []; });
+        return Cloud.getAll('quiz').then(toMetas).catch(function () { return []; });
       }
       return Promise.resolve([]);
     },
@@ -1034,12 +1149,16 @@
       return Promise.all([
         Store.quiz.all().catch(function () { return []; }),
         Published.index().catch(function () { return []; }),
-        Backend._cloudIndex()
+        Backend._cloudIndex(),
+        /* 已刪除的墓碑：本機刪掉、遠端卻沒清乾淨時，靠這裡讓它不再出現在清單上 */
+        Tomb.ids().catch(function () { return []; })
       ]).then(function (r) {
         var map = {};
         var localArr = Array.isArray(r[0]) ? r[0] : [];
         var repoArr = Array.isArray(r[1]) ? r[1] : [];
         var cloudArr = Array.isArray(r[2]) ? r[2] : [];
+        var gone = {};
+        (Array.isArray(r[3]) ? r[3] : []).forEach(function (id) { gone[id] = 1; });
         localArr.forEach(function (q) { if (q && q.id) map[q.id] = metaOf(q, 'local'); });
         cloudArr.forEach(function (m) {
           if (!m || !m.id) return;
@@ -1062,7 +1181,10 @@
             if ((cur[k] == null || cur[k] === '' || cur[k] === 0) && m[k] != null) cur[k] = m[k];
           });
         });
-        return Object.keys(map).map(function (k) { return map[k]; })
+        return Object.keys(map)
+          /* 墓碑優先於一切來源：不論本機、雲端還是 repo 哪一份還在，一律濾掉。 */
+          .filter(function (k) { return !Object.prototype.hasOwnProperty.call(gone, k); })
+          .map(function (k) { return map[k]; })
           .sort(function (a, b) { return String(b.createdAt || '').localeCompare(String(a.createdAt || '')); });
       });
     },
@@ -1174,6 +1296,10 @@
       }
       return Promise.all(jobs).then(function () {
         return Store.quiz.save(quiz);
+      }).then(function () {
+        /* 重新發佈＝復活。不撤掉墓碑的話，這份試卷會被自己的墓碑藏起來，
+           變成「發佈成功卻在清單裡找不到」——比原本的 bug 更難查。 */
+        return Tomb.unmark(quiz.id).catch(function () { return null; });
       }).then(function () { return true; })
         .catch(function (e) {
           quiz.published = wasPublished;      // 發佈失敗 → 不要留下已發佈的假狀態
@@ -1191,17 +1317,66 @@
      */
     deleteQuiz: function (id, opt) {
       opt = opt || {};
-      var res = { ok: false, github: null, githubError: null, cloud: null };
+      var res = {
+        ok: false, pending: false,
+        github: null, githubError: null, githubNote: null,
+        cloud: null, cloudError: null, cloudNote: null, indexPruned: null
+      };
+
+      /* ① 先立墓碑。
+         這是「按了刪除就一定不再出現在清單上」的保證：遠端萬一清不掉，
+         墓碑會留著（pending:true），清單就不會再冒出那一列——
+         舊版是因為遠端（雲端清單／repo index）還留著，清單就一直有它。 */
+      var tombJob = Tomb.mark(id).catch(function () { return null; });
 
       var localJob = Store.quiz.del(id)
         .then(function () { res.ok = true; })
-        .catch(function (e) { res.ok = false; throw e; });
-      var jobs = [localJob];
+        .catch(function (e) {
+          res.ok = false;
+          /* 本機都刪不掉 → 撤掉墓碑，否則會「藏住」一份其實沒被刪掉的試卷 */
+          return Tomb.unmark(id).catch(function () { }).then(function () { throw e; });
+        });
+      var jobs = [tombJob, localJob];
 
-      if (opt.cloud && Firebase.ok()) {
-        jobs.push(Cloud.del('quizzes', id)
-          .then(function (r) { res.cloud = !!r; return r; })
-          .catch(function () { res.cloud = false; return false; }));
+      /* ② 雲端。
+         🔴 舊版條件寫死 `Firebase.ok()` → 用 Apps Script 當雲端的老師根本不會進來刪，
+            雲端副本留著、清單就一直有那一列。現在兩種通道都處理。 */
+      if (opt.cloud && (Firebase.ok() || Hook.ok())) {
+        /* sheetType／keys：Apps Script 那條路要用（Sheet 的主鍵是合成字串，且舊版可能寫成 quiz） */
+        jobs.push(Cloud.del('quizzes', id, {
+          sheetType: 'quiz',
+          keys: [String(id), 'quiz::' + String(id), 'quizzes::' + String(id)]
+        })
+          .then(function () {
+            res.cloud = true;
+            if (!Firebase.ok()) return true;   /* Apps Script：整列刪掉，沒有清單要修 */
+            /* 🔴 Firebase 另有一份 quizzesIndex（publishQuiz 寫的，也是 _cloudIndex 優先讀的來源）。
+               舊版只刪了試卷本體、沒動清單 → 那份試卷永遠留在「試卷管理」。
+               這正是使用者回報的「按了刪除還顯示」。 */
+            return Firebase.get('quizzesIndex').catch(function () { return null; }).then(function (j) {
+              var idx = arrayify(j, 'quizzesIndex');
+              if (!idx.length) return true;
+              var next = idx.filter(function (m) { return !m || m.id !== id; });
+              if (next.length === idx.length) { res.indexPruned = false; return true; }
+              return Firebase.put('quizzesIndex', next)
+                /* 寫完回讀確認，不要製造「以為刪掉了」的假象 */
+                .then(function () { return Firebase.get('quizzesIndex').catch(function () { return null; }); })
+                .then(function (again) {
+                  var still = arrayify(again, 'quizzesIndex').some(function (m) { return m && m.id === id; });
+                  if (still) throw new Error('雲端清單更新失敗（試卷可能還會出現在清單裡）');
+                  res.indexPruned = true;
+                  return true;
+                });
+            });
+          })
+          .catch(function (e) {
+            res.cloud = false;
+            res.cloudError = (e && e.message) || String(e);
+            return false;
+          }));
+      } else if (opt.cloud) {
+        /* 沒有雲端可清不算失敗（可能本來就只存在本機），所以留 null、不要變成 pending */
+        res.cloudNote = '沒有設定雲端，沒有雲端副本需要清';
       }
 
       if (opt.github && GitHub.ok()) {
@@ -1226,11 +1401,32 @@
             })
         );
       } else if (opt.github && !GitHub.ok()) {
-        res.github = false;
-        res.githubError = '尚未設定 GitHub（缺少擁有者／repo／Token）';
+        /* 沒設定 GitHub 時，「這份試卷到底有沒有線上副本」只有呼叫端知道
+           （老師端看得到 published／_repo）→ 由 opt.onGithub 決定要不要當成待處理。 */
+        if (opt.onGithub) {
+          res.github = false;
+          res.githubError = '尚未設定 GitHub（缺少擁有者／repo／Token）';
+        } else {
+          res.githubNote = '沒有設定 GitHub，這份試卷也沒有線上副本';
+        }
       }
 
-      return Promise.all(jobs).then(function () { return res; });
+      return Promise.all(jobs).then(function () {
+        /* 只有「真的嘗試過卻失敗」才算殘留。
+           沒設定某個通道 ≠ 失敗，否則會留下一堆永遠清不掉的待處理紀錄。 */
+        res.pending = (res.cloud === false || res.github === false);
+        /* 遠端也清乾淨了 → 墓碑結案；還有殘留 → 留著（清單才不會再冒出那一列） */
+        return (res.pending ? Promise.resolve(true) : Tomb.resolve(id))
+          .catch(function () { return null; })
+          .then(function () { return res; });
+      });
+    },
+
+    /** 已刪除、但遠端（雲端／repo）還沒清乾淨的試卷。給 UI 顯示與清掃用。 */
+    pendingDeletes: function () {
+      return Tomb.list().then(function (l) {
+        return l.filter(function (x) { return x.pending; });
+      }).catch(function () { return []; });
     },
 
     /**
@@ -1269,17 +1465,21 @@
               orphans: orphans, removed: 0, errors: [] };
           }
           /* 逐一刪除（GitHub Contents API 一次只能刪一個檔） */
-          var removed = 0, errors = [];
+          var removed = 0, errors = [], removedIds = [];
           return orphans.reduce(function (p, o) {
             return p.then(function () {
               return GitHub.remove(o.path, 'cleanup orphan quiz: ' + o.id)
-                .then(function () { removed++; })
+                .then(function () { removed++; removedIds.push(o.id); })
                 .catch(function (e) { errors.push({ id: o.id, error: (e && e.message) || String(e) }); });
             });
-          }, Promise.resolve()).then(function () {
-            return { ok: true, dryRun: false, indexCount: idx.length, fileCount: files.length,
-              orphans: orphans, removed: removed, errors: errors };
-          });
+          }, Promise.resolve())
+            /* 殘留檔真的清掉了 → 對應的墓碑也可以結案，
+               否則「N 份還沒清乾淨」會永遠掛在清單上，變成狼來了。 */
+            .then(function () { return Tomb.forget(removedIds).catch(function () { return null; }); })
+            .then(function () {
+              return { ok: true, dryRun: false, indexCount: idx.length, fileCount: files.length,
+                orphans: orphans, removed: removed, errors: errors };
+            });
         });
       });
     },

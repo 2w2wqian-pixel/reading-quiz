@@ -6,19 +6,22 @@
    請模型「檢查哪幾題沒抓到答案」「把第 7 題的表格補齊」「產生解析」。
 
    ------------------------------------------------------------
-   三個通道（依序嘗試，全部都在瀏覽器端，不需要後端伺服器）
-     A. hook   走既有的 Apps Script／Webhook 代理（金鑰留在伺服器端，最安全）
-     B. direct 老師自己填 API 金鑰，直接打 OpenAI 相容端點（最簡單）
-     C. gemini Google Gemini（金鑰放 query string，CORS 友善）
+   四個通道（依序嘗試，全部都在瀏覽器端，不需要後端伺服器）
+     A. hook      走既有的 Apps Script／Webhook 代理（金鑰留在伺服器端，最安全）
+     B. deepseek  DeepSeek（香港／中國大陸最省事：不擋 IP、直連、不必中間服務）
+     C. direct    老師自己填 API 金鑰，直接打 OpenAI 相容端點（OpenAI／Groq／Ollama）
+     D. openrouter OpenRouter（有免費模型，但試卷內容會經過這個中間服務）
+     E. gemini    Google Gemini（金鑰放 query string，CORS 友善；⚠ 香港不可用）
    ------------------------------------------------------------
    設定（localStorage `rq.settings.v1` 的 `ai` 欄位）：
      {
        enabled:  true,
-       provider: 'direct' | 'gemini' | 'hook',
-       endpoint: 'https://api.openai.com/v1'   // OpenAI 相容 base
-       model:    'gpt-4o-mini',
+       provider: 'deepseek' | 'openrouter' | 'gemini' | 'direct' | 'hook',
+       endpoint: 'https://api.deepseek.com'    // OpenAI 相容 base
+       model:    'deepseek-v4-flash',
        apiKey:   'sk-…',
-       keyQuery: 'key',                        // gemini 用
+       keyQuery: 'key',                        // 只有 gemini 用得到
+       upstream: '',                           // 只有 hook 用得到；留空＝由 Apps Script 決定
        viaHook:  false                         // 連 hook 也一起試
      }
 
@@ -31,8 +34,22 @@
   var U = RQ.util;
 
   var   PROVIDERS = {
+    deepseek: {
+      /* 🔴 香港／中國大陸最省事的一條路。
+         DeepSeek 是中國服務，**不擋香港 IP**，金鑰在 platform.deepseek.com 直接申請；
+         端點與 OpenAI 完全相容（Authorization: Bearer + /chat/completions），
+         實測 CORS 預檢回 allow-methods: POST／allow-headers: authorization,content-type，
+         所以純前端（GitHub Pages）可以直接呼叫，不需要任何代理。
+         也不需要經過 OpenRouter 這類中間服務，試卷內容只會送到 DeepSeek。 */
+      label: 'DeepSeek（香港可用、不必 VPN、直連）',
+      endpoint: 'https://api.deepseek.com',
+      /* ⚠ 不要填 deepseek-chat／deepseek-reasoner：
+         官方已於 **2026-07-24** 停用這兩個模型名（請求會直接失敗）。
+         現在可用的名字是 deepseek-v4-flash（便宜、快）與 deepseek-v4-pro（推理強）。 */
+      model: 'deepseek-v4-flash'
+    },
     direct: {
-      label: 'OpenAI 相容端點（OpenAI／DeepSeek／Groq／Ollama…）',
+      label: 'OpenAI 相容端點（OpenAI／Groq／Ollama…）',
       endpoint: 'https://api.openai.com/v1',
       model: 'gpt-4o-mini'
     },
@@ -77,6 +94,9 @@
     model: '',
     apiKey: '',
     keyQuery: 'key',
+    /* 通道＝hook 時「要代打的目標通道」。留空＝完全交給 Apps Script 的
+       AI_PROVIDER 指令碼屬性決定（香港代打 Gemini 就是靠這個留空）。 */
+    upstream: '',
     viaHook: false,
     temperature: 0.2,
     maxChars: 30000
@@ -208,6 +228,8 @@
     if (c.provider === 'hook') return hookUrl ? { kind: 'hook', ready: true } : { kind: 'hook', ready: false, why: '尚未設定 hook.postUrl' };
     if (c.provider === 'gemini') return c.apiKey ? { kind: 'gemini', ready: true } : { kind: 'gemini', ready: false, why: '尚未填 Gemini API 金鑰' };
     if (c.provider === 'openrouter') return c.apiKey ? { kind: 'direct', ready: true } : { kind: 'openrouter', ready: false, why: '尚未填 OpenRouter API 金鑰' };
+    /* DeepSeek 走 OpenAI 相容形狀，所以 kind 同樣是 direct；分開只是為了帶對預設值與說明 */
+    if (c.provider === 'deepseek') return c.apiKey ? { kind: 'direct', ready: true } : { kind: 'direct', ready: false, why: '尚未填 DeepSeek API 金鑰' };
     if (c.provider === 'direct') return c.apiKey ? { kind: 'direct', ready: true } : { kind: 'direct', ready: false, why: '尚未填 API 金鑰' };
     return { kind: c.provider, ready: false, why: '未知的提供者' };
   }
@@ -273,10 +295,21 @@
   }
 
   /* ---------- 通道：OpenAI 相容 ---------- */
+  /**
+   * 把「OpenAI 相容 base」補成完整端點。
+   * 老師填 https://api.deepseek.com 或 https://api.deepseek.com/v1 都要能用，
+   * 所以 base 尾端已經有版本段（/v1、/v2、/openai）就不再疊一層。
+   */
+  function apiUrl(base, tail) {
+    var b = String(base || '').replace(/\/+$/, '');
+    var hasVer = /(\/v1|\/openai)$/.test(b) || /\/v\d+$/.test(b);
+    return b + (hasVer ? tail : '/v1' + tail);
+  }
+
   function callDirect(c, messages) {
-    var base = String(c.endpoint || '').replace(/\/+$/, '');
+    var base = String(c.endpoint || (PROVIDERS[c.provider] && PROVIDERS[c.provider].endpoint) || '').replace(/\/+$/, '');
     if (!base) throw new Error('尚未設定 API 端點（endpoint）');
-    var url = base + (/(\/v1|\/openai)$/.test(base) || /\/v\d/.test(base) ? '/chat/completions' : '/v1/chat/completions');
+    var url = apiUrl(base, '/chat/completions');
     var headers = {
       'Content-Type': 'application/json',
       'Authorization': 'Bearer ' + c.apiKey
@@ -291,7 +324,7 @@
       cache: 'no-store',
       headers: headers,
       body: JSON.stringify({
-        model: c.model || PROVIDERS.direct.model,
+        model: c.model || (PROVIDERS[c.provider] && PROVIDERS[c.provider].model) || PROVIDERS.direct.model,
         temperature: c.temperature,
         messages: messages
       })
@@ -474,7 +507,12 @@
     var payload = {
       action: 'ai',
       key: key,
-      provider: c.provider === 'hook' ? (c.upstream || 'direct') : c.provider,
+      /* 🔴 通道是 hook 時，provider 一律**送空字串**，讓 Apps Script 的
+         AI_PROVIDER 決定。以前這裡預設成 'direct'，會把老師在指令碼屬性裡
+         設的 gemini／deepseek 直接蓋掉——也就是「香港用 Apps Script 代打
+         Gemini」那條路其實根本沒生效（Apps Script 端 `d.provider || c.provider`
+         會先看到這個 'direct'）。 */
+      provider: c.provider === 'hook' ? (c.upstream || '') : c.provider,
       endpoint: c.endpoint || '',
       model: c.model || '',
       temperature: c.temperature,
@@ -615,19 +653,71 @@
   }
 
   /**
-   * 列出「這把金鑰現在真的能用的 Gemini 模型」。
-   * 給設定頁的「看看有哪些模型」用——Google 淘汰模型時老師能自己確認，
+   * 列出「OpenAI 相容端點」現在可用的模型（DeepSeek／OpenRouter／Groq／Ollama…）。
+   *
+   * 為什麼要做這件事：模型名會被淘汰。DeepSeek 就在 2026-07-24 停用了
+   * deepseek-chat／deepseek-reasoner 這兩個名字——老師若照著舊教學文填，
+   * 會直接吃到 400，而且錯誤訊息看起很像「金鑰壞了」。
+   * 與其寫死型號，不如讓老師自己按一下、看清單。
+   */
+  function listOpenAIModels(c) {
+    var base = String(c.endpoint || (PROVIDERS[c.provider] && PROVIDERS[c.provider].endpoint) || '').replace(/\/+$/, '');
+    if (!base) return Promise.reject(new Error('請先填 API 端點'));
+    var url = apiUrl(base, '/models');
+    var headers = { 'Authorization': 'Bearer ' + c.apiKey };
+    /* OpenRouter 對沒有來源標頭的請求較嚴格，這裡一起帶上 */
+    if (/openrouter\.ai/i.test(base)) {
+      headers['HTTP-Referer'] = 'https://2w2wqian-pixel.github.io/reading-quiz/';
+      headers['X-Title'] = 'reading-quiz';
+    }
+    return fetch(url, { method: 'GET', cache: 'no-store', headers: headers }).then(function (r) {
+      return r.text().then(function (t) {
+        var j = null;
+        try { j = JSON.parse(t); } catch (e) { }
+        if (!r.ok) {
+          var msg = (j && j.error && (j.error.message || j.error)) || t.slice(0, 200) || ('HTTP ' + r.status);
+          var err = new Error('無法讀取模型清單（' + r.status + '）：' + msg);
+          err.status = r.status;
+          throw err;
+        }
+        /* OpenAI 形狀：{ object:'list', data:[{ id:'deepseek-v4-flash' }, …] } */
+        var ids = ((j && j.data) || []).map(function (m) { return String(m.id || m.name || ''); })
+          .filter(Boolean);
+        return ids;
+      });
+    });
+  }
+
+  /**
+   * 列出「這把金鑰現在真的能用的模型」。
+   * 依通道自動分流：Gemini 走 ListModels，其餘 OpenAI 相容端點走 GET /models。
+   * 給設定頁的「看看我的金鑰能用哪些模型」用——服務商淘汰模型時老師能自己確認，
    * 不必回來問開發者。
    */
   function listModels(override) {
     var c = Object.assign({}, cfg(), override || {});
     if (!c.apiKey) return Promise.reject(new Error('請先填 API 金鑰'));
-    return listGeminiModels(c).then(function (ids) {
-      /* 好用的排前面（flash 系列），其餘照原順序 */
-      var usable = ids.filter(function (m) { return !/embedding|aqa|imagen|veo|tts|native-audio/i.test(m); });
-      var flash = usable.filter(function (m) { return /flash/i.test(m); });
-      var rest = usable.filter(function (m) { return flash.indexOf(m) < 0; });
-      return { all: usable, preferred: flash.concat(rest), suggested: pickGeminiModel(c, usable) };
+    if (c.provider === 'hook') {
+      return Promise.reject(new Error('代理通道沒有「模型清單」可查——模型與金鑰都填在 Apps Script 的指令碼屬性裡'));
+    }
+    if (c.provider === 'gemini') {
+      return listGeminiModels(c).then(function (ids) {
+        /* 好用的排前面（flash 系列），其餘照原順序 */
+        var usable = ids.filter(function (m) { return !/embedding|aqa|imagen|veo|tts|native-audio/i.test(m); });
+        var flash = usable.filter(function (m) { return /flash/i.test(m); });
+        var rest = usable.filter(function (m) { return flash.indexOf(m) < 0; });
+        return { kind: 'gemini', all: usable, preferred: flash.concat(rest), suggested: pickGeminiModel(c, usable) };
+      });
+    }
+    return listOpenAIModels(c).then(function (ids) {
+      /* 排除明顯不能做對話的（向量、語音、圖像） */
+      var usable = ids.filter(function (m) { return !/embedding|moderation|whisper|tts|dall-e|image|rerank/i.test(m); });
+      var want = String(c.model || '').trim();
+      /* 便宜快的排前面（flash／chat 這類），推理型排後面 */
+      var cheap = usable.filter(function (m) { return /flash|chat|mini|small|turbo|lite/i.test(m); });
+      var rest = usable.filter(function (m) { return cheap.indexOf(m) < 0; });
+      var suggested = usable.indexOf(want) >= 0 ? want : (cheap[0] || usable[0] || '');
+      return { kind: 'openai', all: usable, preferred: cheap.concat(rest), suggested: suggested };
     });
   }
 

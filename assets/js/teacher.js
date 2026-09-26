@@ -1650,23 +1650,27 @@
             var scope = '本機資料' + (onGithub ? '以及 GitHub 上的副本' : '') + '都會被移除';
             U.confirm('確定要刪除試卷「' + m.title + '」嗎？' + scope + '，此動作無法復原。', function () {
               delBtn.disabled = true;
-              Backend.deleteQuiz(m.id, { cloud: true, github: true }).then(function (r) {
+              /* onGithub 要傳進去：沒設定 GitHub 時，只有呼叫端知道這份試卷到底有沒有線上副本，
+                 才不會把「本來就沒有副本」誤判成「刪除殘留」。 */
+              Backend.deleteQuiz(m.id, { cloud: true, github: true, onGithub: onGithub }).then(function (r) {
                 if (!r.ok) { U.toast('本機刪除失敗', 'bad'); delBtn.disabled = false; return; }
-                if (onGithub && r.github === false) {
-                  /* 把 GitHub 的**真實原因**說出來，不要只說「刪除失敗」——
-                     最常見的是 Token 過期或沒有 Contents 寫入權限，講清楚老師才知道怎麼辦。 */
+                if (r.pending) {
+                  /* 本機刪掉了、清單也不會再出現（本機立了墓碑），但線上副本沒清乾淨。
+                     要把「哪裡沒清掉」與「怎麼收拾」講清楚，否則老師會以為刪除失敗而一直重按。 */
+                  var lines = [];
+                  if (r.cloud === false) lines.push('雲端：' + (r.cloudError || '未知錯誤'));
+                  if (r.github === false) lines.push('GitHub：' + (r.githubError || '未知錯誤'));
                   U.modal({
-                    title: '⚠️ 本機已刪除，但 GitHub 副本沒刪掉',
-                    width: 560,
+                    title: '本機已刪除，但線上副本沒清乾淨',
+                    width: 580,
                     body: U.el('div', {}, [
-                      U.el('div', { text: '這份試卷已經從這台裝置刪除了，但 repo 上的檔案還在。' }),
-                      U.el('div.warnbox.mt2', { text: 'GitHub 回報：' + (r.githubError || '未知錯誤') }),
+                      U.el('div', { text: '「' + m.title + '」已經從這台裝置刪除，清單上也不會再出現；但下列位置的副本還在線上。' }),
+                      U.el('div.warnbox.mt2', { html: lines.map(function (t) { return U.esc(t); }).join('<br>') }),
                       U.el('div.tiny.muted.mt2', {
                         html: '常見原因：<br>' +
-                          '① Token 過期或貼錯（到「設定 → ③ GitHub」按「測試連線」確認）<br>' +
-                          '② Token 沒有 <code>Contents: Read and write</code> 權限<br>' +
-                          '③ repo 名稱／擁有者填錯<br><br>' +
-                          '修好之後，可以用下方「🧹 檢查線上殘留檔案」把它清掉。'
+                          '① GitHub Token 過期，或沒有 <code>Contents: Read and write</code> 權限（設定 → ③ GitHub 按「測試連線」）<br>' +
+                          '② 雲端（Firebase／收集端）沒設定，或規則拒絕寫入<br>' +
+                          '③ 收集端 Apps Script 是舊版（舊版沒有刪除動作，需重新部署）'
                       })
                     ]),
                     actions: [{ label: '知道了' }, {
@@ -1678,7 +1682,7 @@
                 } else if (r.githubNote) {
                   U.toast('試卷已刪除（repo 上本來就沒有這個檔案）', 'ok');
                 } else {
-                  U.toast('試卷已刪除', 'ok');
+                  U.toast('試卷已刪除' + (onGithub ? '（本機與線上副本都清掉了）' : ''), 'ok');
                 }
                 view.innerHTML = '';
                 Teacher.quizzes(view);
@@ -1709,6 +1713,19 @@
           })
         ]));
       }
+
+      /* 已刪除、但線上副本還沒清乾淨的試卷。
+         刪除當下會彈一次訊息，但關掉就忘了 → 這裡常駐提示，老師才會真的去收拾。
+         清單本身已經不會顯示這些試卷（本機有墓碑），這裡只是把「未結案」的狀態講出來。 */
+      var pendBox = U.el('div');
+      box.appendChild(pendBox);
+      Backend.pendingDeletes().then(function (ps) {
+        if (!ps || !ps.length) return;
+        pendBox.appendChild(U.el('div.warnbox.mt2', {
+          html: '有 <b>' + ps.length + '</b> 份試卷已在本機刪除，但線上副本還沒清掉'
+            + '（清單不會再顯示它們）。修好 GitHub／雲端設定後，可用上方「🧹 檢查線上殘留檔案」收拾。'
+        }));
+      }).catch(function () { });
     });
   };
 
@@ -2646,7 +2663,7 @@
 
     /* ---- 通道選擇 ---- */
     var selProvider = U.el('select.input', { style: { maxWidth: '100%' } });
-    ['openrouter', 'gemini', 'direct', 'hook'].forEach(function (k) {
+    ['deepseek', 'openrouter', 'gemini', 'direct', 'hook'].forEach(function (k) {
       selProvider.appendChild(U.el('option', { value: k, text: AI.PROVIDERS[k].label }));
     });
     selProvider.value = c.provider;
@@ -2659,10 +2676,12 @@
     card.appendChild(U.el('div.warnbox.mt2', {
       html: '<b>🇭🇰 香港／中國大陸的老師請先看這裡：</b>Google AI Studio <b>不支援香港地區</b>，' +
         '所以 Gemini 那條通道<b>連免費金鑰都申請不到</b>（不是我們的程式壞了）。<br>' +
-        '不用 VPN 也有兩條路：<br>' +
-        '① <b>改用 OpenRouter</b>（最簡單）——<code>openrouter.ai/keys</code> 直接申請，' +
-        '香港 IP 可用，有免費模型。<br>' +
-        '② <b>用 Apps Script 當代理</b>——Apps Script 在香港正常可用，而它的伺服器在 Google 支援區內，' +
+        '不用 VPN 有三條路：<br>' +
+        '① <b>改用 DeepSeek</b>——不擋香港 IP、直連、不必經中間服務，' +
+        '金鑰到 <code>platform.deepseek.com</code> 就能申請（付費但很便宜）。<br>' +
+        '② <b>改用 OpenRouter</b>——<code>openrouter.ai/keys</code> 申請，有免費模型，' +
+        '但試卷內容會經過這個中間服務。<br>' +
+        '③ <b>用 Apps Script 當代理</b>——Apps Script 在香港正常可用，而它的伺服器在 Google 支援區內，' +
         '由它代打 Gemini 就繞過限制（見下方「代理」說明）。'
     }));
 
@@ -2676,14 +2695,35 @@
     var boxDirect = U.el('div');
     var lblEnd = U.el('label.tiny.muted', { text: 'API 端點（OpenAI 相容 base；會自動接上 /chat/completions）' });
     var lblModel = U.el('label.tiny.muted', { text: '模型名稱' });
+    var lblKeyQ = U.el('label.tiny.muted', { text: '金鑰參數名' });
     boxDirect.appendChild(U.el('div', {}, [lblEnd, inEnd]));
     boxDirect.appendChild(U.el('div.mt1', {}, [lblModel, inModel]));
     boxDirect.appendChild(U.el('div.mt1', {}, [U.el('label.tiny.muted', { text: 'API 金鑰' }), inKey]));
     boxDirect.appendChild(U.el('div.mt1.row', {}, [
       U.el('label.tiny.muted', { text: '溫度（0 = 最保守，建議 0.2）' }), inTemp,
-      U.el('label.tiny.muted', { text: '金鑰參數名' }), inKeyQ
+      lblKeyQ, inKeyQ
     ]));
     card.appendChild(boxDirect);
+
+    /* DeepSeek：香港／中國大陸最省事的一條路（不擋 IP、直連、不必中間服務） */
+    var deepseekHelp = U.el('div.infobox.mt2', {
+      html: '<b>DeepSeek 金鑰怎麼拿（香港手機號或 email 都可以註冊）：</b><br>' +
+        '① 開 <code>platform.deepseek.com</code> → 註冊／登入<br>' +
+        '② 左側選「<b>API keys</b>」→ <b>Create new API key</b> → 複製那串 <code>sk-…</code><br>' +
+        '③ 貼到上面的「API 金鑰」，按「<b>儲存並測試連線</b>」<br>' +
+        '<b>端點與模型已經幫你填好了</b>，不必改。<br><br>' +
+        '<b>模型怎麼選</b>：<code>deepseek-v4-flash</code>（便宜、快，一般批改夠用）；' +
+        '要更強的推理再換 <code>deepseek-v4-pro</code>。' +
+        '不確定現在有哪些型號，可按下面的「<b>看看我的金鑰能用哪些模型</b>」直接問。<br>' +
+        '<b>⚠ 不要填 <code>deepseek-chat</code> 或 <code>deepseek-reasoner</code></b>——' +
+        '官方已於 <b>2026-07-24</b> 停用這兩個名字，填了會直接報錯。<br><br>' +
+        '<b>為什麼香港用這條最省事：</b>DeepSeek 不擋香港 IP，' +
+        '不必 VPN、不必開帳單、也不必經過 OpenRouter 這類中間服務——' +
+        '試卷內容只會送到 DeepSeek 一家。它是付費服務，但單價低，' +
+        '而且沒有「免費層不涵蓋香港」那個問題。<br>' +
+        '<b>隱私：</b>試卷的文字會離開這台電腦、送到 DeepSeek 的伺服器。' +
+        '完全不想外傳的話，請改用本機 Ollama（走「OpenAI 相容端點」那條）。'
+    });
 
     /* Gemini 的專屬說明：最多人卡在這裡（只在 Gemini 通道顯示） */
     var geminiHelp = U.el('div.infobox.mt2', {
@@ -2725,8 +2765,9 @@
         '<code>AI_MODEL</code> <b>留空</b>（程式會自動挑可用的模型），' +
         '<code>AI_KEY</code> 填你拿到的 Gemini 金鑰。' +
         'Apps Script 的伺服器在 Google 支援區內，所以<b>香港也能用，不需要 VPN</b>。<br>' +
-        '若連金鑰都申請不到，<code>AI_PROVIDER</code> 改填 <code>openrouter</code>，' +
-        '<code>AI_KEY</code> 填 OpenRouter 的金鑰即可。'
+        '若連金鑰都申請不到，<code>AI_PROVIDER</code> 改填 <code>openrouter</code> 或 ' +
+        '<code>deepseek</code>，<code>AI_KEY</code> 填對應的金鑰即可。' +
+        '（選 <code>deepseek</code> 的話模型與端點會自動帶入，不必另外填。）'
     });
 
     /* 代理通道的「備援」：主要通道失敗時，再走一次 hook */
@@ -2763,17 +2804,31 @@
       } else if (openrouterHelp.parentNode) {
         openrouterHelp.parentNode.removeChild(openrouterHelp);
       }
+      if (k === 'deepseek') {
+        boxDirect.appendChild(deepseekHelp);
+      } else if (deepseekHelp.parentNode) {
+        deepseekHelp.parentNode.removeChild(deepseekHelp);
+      }
       /* hook 通道的欄位標籤要換句話說：那些值其實是「網站端對應的通道」 */
       lblEnd.textContent = (k === 'hook')
         ? '（留空即可，實際端點填在 Apps Script）'
         : (k === 'gemini'
           ? 'API 端點（Gemini 用；留空自動帶入）'
-          : 'API 端點（OpenAI 相容 base；會自動接上 /chat/completions）');
+          : (k === 'deepseek'
+            ? 'API 端點（DeepSeek 用；已填好，不必改）'
+            : 'API 端點（OpenAI 相容 base；會自動接上 /chat/completions）'));
       lblModel.textContent = (k === 'hook')
         ? '（留空即可，實際模型填在 Apps Script）'
         : (k === 'gemini'
           ? '模型名稱（建議留空，讓程式自動挑最新可用）'
-          : '模型名稱');
+          : (k === 'deepseek'
+            ? '模型名稱（deepseek-v4-flash；勿填 deepseek-chat，已停用）'
+            : '模型名稱'));
+      /* 「金鑰參數名」只有 Gemini 用得到（它的金鑰放在 query string）；
+         其餘通道金鑰都在 Authorization 標頭，這格是死的，講清楚免得老師白填。 */
+      lblKeyQ.textContent = (k === 'gemini')
+        ? '金鑰參數名'
+        : '金鑰參數名（本通道不使用，金鑰走 Authorization 標頭）';
       /* 換通道時帶入該通道的預設 endpoint／model（使用者改過就尊重） */
       var def = AI.PROVIDERS[k] || {};
       if (!U.trim(inEnd.value) && def.endpoint) inEnd.value = def.endpoint;
@@ -2839,18 +2894,24 @@
               (e && e.regionBlocked
                 ? '<div class="warnbox mt1"><b>🇭🇰 這是地區限制，不是設定錯。</b><br>' +
                   '你的金鑰可以正常使用，但 Google 的<b>免費層不涵蓋香港／中國大陸</b>。不用 VPN 的解法：<br>' +
-                  '① 通道改選 <b>OpenRouter</b>（最省事，香港可直接申請金鑰）<br>' +
-                  '② 通道改選 <b>代理</b>，讓 Apps Script 代打（Apps Script 在香港可用）<br>' +
-                  '③ 到 AI Studio 開啟帳單（變成付費層，地區不受限）</div>'
+                  '① 通道改選 <b>DeepSeek</b>（不擋香港 IP、直連、不必經中間服務）<br>' +
+                  '② 通道改選 <b>OpenRouter</b>（有免費模型，但試卷內容會經過它）<br>' +
+                  '③ 通道改選 <b>代理</b>，讓 Apps Script 代打（Apps Script 在香港可用）<br>' +
+                  '④ 到 AI Studio 開啟帳單（變成付費層，地區不受限）</div>'
                 : '');
           });
         }
       }),
       U.el('button.btn.sm.sun', {
         text: '看看我的金鑰能用哪些模型', onclick: function () {
-          if (selProvider.value !== 'gemini') { U.toast('這顆按鈕只在 Gemini 通道有意義（OpenRouter 請直接看它網站的模型清單）', 'bad', 4000); return; }
+          var k = selProvider.value;
+          if (k === 'hook') {
+            U.toast('代理通道沒有模型清單可查——模型與金鑰都填在 Apps Script 的指令碼屬性裡', 'bad', 4500);
+            return;
+          }
           AI.save(collect());
-          testOut.innerHTML = '<span class="muted">正在向 Google 查詢…</span>';
+          var who = (k === 'gemini') ? 'Google' : (k === 'deepseek' ? 'DeepSeek' : '這個端點');
+          testOut.innerHTML = '<span class="muted">正在向 ' + U.esc(who) + ' 查詢…</span>';
           AI.listModels().then(function (r) {
             var picks = r.preferred.slice(0, 12);
             testOut.innerHTML = '<span class="tag mint">共 ' + r.all.length + ' 個</span> ' +
@@ -2861,7 +2922,11 @@
             var m = (e && e.message) || e;
             testOut.innerHTML = '<span class="tag bad">失敗</span> ' + U.esc(m) +
               (/not available|region|country|PERMISSION|403/i.test(String(m))
-                ? '<div class="tiny muted mt1">若訊息提到地區／國家，代表香港不支援免費層 —— 請改用 OpenRouter 或代理通道。</div>'
+                ? '<div class="tiny muted mt1">若訊息提到地區／國家，代表香港不支援免費層 —— 請改用 DeepSeek、OpenRouter 或代理通道。</div>'
+                : '') +
+              /* 401／403 在金鑰類服務最常見，講清楚是哪一種，免得老師以為程式壞了 */
+              (/401|403|invalid.*key|api key/i.test(String(m))
+                ? '<div class="tiny muted mt1">金鑰本身有問題（填錯、已撤銷、或該服務尚未開通）。請重新複製一次金鑰再試。</div>'
                 : '');
           });
         }

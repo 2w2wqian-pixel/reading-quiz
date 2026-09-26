@@ -136,7 +136,9 @@ window.fetch=function(url,opt){
       const txt = m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"');
       console.log(txt);
       try { server.close(); } catch (e) { }
-      process.exit(/fail 0/.test(txt) ? 0 : 1);
+      /* ⚠ 判斷字串要寫「0 fail」而不是「fail 0」：摘要格式是「16 pass / 0 fail」，
+         寫反的話就算全過也會 process.exit(1)，整套看起來永遠是紅的。 */
+      process.exit(/\b0 fail\b/.test(txt) ? 0 : 1);
     } else {
       console.log('沒有結果（可能逾時或崩潰）');
       console.log(out.slice(0, 600));
